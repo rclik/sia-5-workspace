@@ -1,0 +1,215 @@
+Chapter#1
+
+Spring in genel olarak yaptigi is, bir container (application container) yaratmak. Bu application container applicaton component larini yonetir. onlarin instance larini olusturur. ayrica projede olan dependency leri yoneterek applicaton tarafindan kullanilmasini saglar. ve application in kullanicagi bircok ozellik tanimlayarak applicaton tarafindan kullanilmasini saglar.
+ayrica depenency injection design pattern i kullanarak application component larini biribirlerine baglar.
+
+spring 
+	- reactive framework 
+	- microservices framework
+	- web framework 
+	- database integrations
+	- security framework 
+	- run time monitoring
+gibi feature lar icerir ve developer a sunar
+
+eskiden xml lerle bean leri container a tanimlardik ama sonra java annotation lariyla bu islem yapilmaya baslandi. bu sekilde bean tanimlamalari daha kolay oldugunu soyleyebiliriz.
+
+	<bean id="inventoryService" class="com.example.InventoryService" />
+
+	<bean id="productService" class="com.example.ProductService" />
+		<constructor-arg ref="inventoryService" />
+	</bean>
+
+bunun annotation ile karsiligi:
+
+	@Configuration
+	public class ServiceConfiguration {
+	  @Bean
+	  public InventoryService inventoryService() {
+	    return new InventoryService();
+	  }
+	  @Bean
+	  public ProductService productService() {
+	    return new ProductService(inventoryService());
+	  }
+	}
+
+buradan cikaracagimiz gibi:
+	@Configuration 
+		bu annotation spring container ina bu class in bean leri barindirabililecegini soylmek icin vardir.
+	@Bean
+		spring container bu annotation i gorunce method un return edilen object i icin container da bir instance olusturur. daha dogrusu bean tanimini alir. burada bean name i method name olarak alinir.
+
+Java ve XML based configuration in ikisinde de application contaner bean lari developer in beyani uzerine olusturur. bunu asmak icin spring automatic configuration ozelligini cikartti. 
+
+automatic configuration iki kisimdan olusur. birincisi component scanning, ikicisi ise autowiring dir.
+component scanning ile spring container bean leri kendisi bulur ve container ina bean olarak ekler. autowiring ile ise bean ler arasindaki dependency injection islerini halleder, yani birbirleriyle olarna iliskilerini gerceklestirir.
+
+bunun bir ileri versiyon ise autoconfiguration dir. burada da spring classpath deki dependency lerin ve bean lerin birbirleriyle olancak iliskilerini, environment variables daki degerlere ve entry lere bakarak tahmin eder ve dependency injection islerini yaparlar.
+
+autoconfiguration bu spring boot da var.
+
+spring boot autoconfiguration xml ve java based configuration larini bayagi dusurdu.
+
+1.2. Spring Boot Application Hazirlama
+	Spring Boot projesi olusturmak icin Spring Initializr kullanilabilir. bunu web uzerinden veya ide ler uzerinden kullanabiliriz. ayrica curl ile de yapilabilir.
+
+	spring tool suite en iyi ide dir. onun uzerinden kurabiliriz ama ben intellij uzerinden yapacagim.
+
+	spring boot dev tools 
+	thymeleaf
+		-- web template icin kullanilir.
+	spring web 
+bu uc dependency ile spring initilizr uzerinden project olusturabiliriz.
+
+sonuc olarak elimizde bir tane project olusuyor:
+	- chapter1
+		- src
+			- main
+				- java
+					...java codes here
+					...Chapter1Application 
+						application in main class i denebilir, bunun uzerden app ayaga kalkacak.
+				- resources
+					- static
+						static content leri koyacagimiz folder mesela css, iamge, js gibi
+					- templates
+						browser a icerik saglayacak template file larin tutulacagi folder dir. thymeleaf gibi.
+					- application.properties
+						bu file spring e bazi prooperty leri verirken kullanilirlar. bu prolperty ler app icinde kullanilacaklar.
+			- test
+				- java
+					...java codes here
+					...Chapter1ApplicationTest
+						burada ise code larin unit testlerini bulunacak. 
+		- mvnw
+		- mvnw.cmd
+			mvnw vw mvnw.cmd dosyalari maven makinede olmasina gerek kalmadan derlenmesini saglayan dosyalardir
+		- pom.xml
+
+basit olarak bu sekilde bir structure var.
+
+pom.xml i inceleyelim
+	- packaging 
+		<packaging>jar</packaging>
+		bu project in build sonrainda hangi file tipinde olusturulmasini istedigimizi soyluyoruz.
+		war olarak cikarmak icin ise burayi war edicez bir de applicaton main class ini web context initializer a gostermemiz lazim.
+
+	- parent
+		<parent>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-parent</artifactId>
+			<version>2.0.4.RELEASE</version>
+			<relativePath/> 
+		</parent>
+
+		burada ise spring boot un parent project ini veriyoruz. genel olarak hangi spring version inin kullanilacagin bilgilsini veriyoruz. spring icin gerekli olan core data lari inject eder. bu parent project ine gore diger dependency ler de yonetilirler.
+
+	- spring boot 
+
+	...
+		<build>
+		  <plugins>
+			<plugin>
+				<groupId>org.springframework.boot</groupId>
+				<artifactId>spring-boot-maven-plugin</artifactId>
+		     </plugin>
+		  </plugins>
+		</build>
+
+	spring boot mvn plug inini kullanmak icin.
+
+		<dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-thymeleaf</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-devtools</artifactId>
+            <scope>runtime</scope>
+            <optional>true</optional>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+            <exclusions>
+                <exclusion>
+                    <groupId>org.junit.vintage</groupId>
+                    <artifactId>junit-vintage-engine</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency> 
+     ...
+starter dependency lerin sunlar gibi yararlari vardir.
+	- build file daha kucuk ve alasilmasi kolay olur. cunku bir starter dependency eklediginde sadece onu eklersin ve bu dependency nin diger dependency lerini eklemek zorunda olmazsin.
+	- dependency lerin isminlerini ezberlersin ama icindeki library lerin name lerini ezberlemek zorunda kalmazsin. bu sekilde daha aklida kalici dependency lerin olur.
+	- bir de dependency lerin yonetiminde version update ederken cikabilecek zorluklari minimize etmis oluruz. cunku version degistirmek icin sadece parent in version ini degistrimek yeterli olaccatir.
+
+maven spring boot plugin
+	- spring uygulamasinin maven goal lerini olusturur.
+	- uygulama icindeki maven dependency lerin build sonunda olussacak file icinde olmasini garanti eder.
+	- manifest file inin olusmasini saglar, icinde ise main class bilgisi olacak.
+
+BootStrapping Application 
+	
+	@SpringBootApplication
+	public class TacoCloudApplication {
+		public static void main(String[] args) {
+			SpringApplication.run(TacoCloudApplication.class, args);
+		}
+	}
+
+bu class manifest dosyasida executable jar in main class i olarak setlenir. spring boot plugin bu ise yariyordu.
+@SpringBootApplication annotation ise bunun spring boot application i oldugunu soyler. bu annotation ise composite annotation dir. yani birden fazla annotation i icinde barindirir. bunlar:
+	- @SpringBootConfiguration
+		bu aslinda bu class in configuration class oldugunu soylemek icin kullanilir. java based spring framework de oldugunda olan @Configuration annotation inin ozel halidir. Bean define etmek icin burayi kullanabiliriz. Ayni @Configuration da oldugu gibi. 
+	- @EnableAutoConfiguration
+		spring boot un autoconfiguration ozelligini enable eder. bu ise uygulamanin ihtiyaci olabilecek ozellikleri spring boot un kendisi load edecek demek.
+	- @ComponentScan 
+		spring in sagadigi diger annotation lari scan etmek icin kullanilir. bu sekilde ise enable etmis oluyoruz.
+
+Main method u ise icinde SpringApplication class inin run method unu cagirir, bu class spring container ini calistirir. container i initiaze eder. icine de bizim application class ini verir. (TacoCloudApplication)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
