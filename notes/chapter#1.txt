@@ -177,39 +177,134 @@ bu class manifest dosyasida executable jar in main class i olarak setlenir. spri
 Main method u ise icinde SpringApplication class inin run method unu cagirir, bu class spring container ini calistirir. container i initiaze eder. icine de bizim application class ini verir. (TacoCloudApplication)
 
 
+1.3. Writing An Application
+	bi tane home page yapicaz
+	bunun icin bir tane controller imiz olacak home page icin
+	bir tane de home page icin teplate imiz olacak.
+
+Spring MVC
+	burada 
+		model 
+			- database deki data lardir.
+		view 
+			- html iceriktir, client a gosterilir
+		controller
+			- request leri karsilar, model i ve html i gunceller.
+spring mvc genelde bu sekilde calisir.
+
+	@Controller
+	public class HomeController {
+	  @GetMapping("/")
+	  public String home() {
+	    return "home";
+	  }
+	}
+
+bu basit olarak controller class i ve  context path e request olunca bor tane string donuyor. 
+@Controller annotation does not do so much. tek yaptigi is, bu class in bir bean olarak spring application context tarafindan bulunmasini saglamaktir.
+
+@Repository, @Service ve @Component ann. lari da ayni bunun gibidir. birbirleriyle farklari yoktur. Amac sadece SAC tarafindan bunun bean oldugnun soylenmesidir. ama daha acik bir sekilde code un anlasilmasini saglar.
+
+bu method http get request ine home string i donuyor. Spring Appcalition Context, classpath imizde thymeleaf oldugundan, donen string in adindaki thymeleaf template ini, templates folder i altinda arar ve onu render ederek client a htnl icinde doner.
+
+cok basit olarak home template:\
+
+	<!DOCTYPE html>
+	<html xmlns="http://www.w3.org/1999/xhtml" xmlns:th="http://www.thymeleaf.org"> 
+		<head>
+	    	<title>Taco Cloud</title>
+		</head>
+		<body>
+			<h1>Welcome to...</h1>
+			<img th:src="@{/images/TacoCloud.png}"/>
+		</body>
+	</html>
+
+ne oldu:
+	http://localhost:8080/ url ine bastirigimizda ilk once controller request i karsiladi ve home template ine spring i yonlendirdi. o da html page i render edip client a html icerigi gonderdi.
+
+simdi bunun test ini yazalim:
+
+@RunWith(SpringRunner.class) 
+@WebMvcTest(HomeController.class) 
+public class HomeControllerTest {
+
+	@Autowired
+	private MockMvc mockMvc; // Web test for HomeController Injects MockMvc
+
+		@Test
+		public void testHomePage() throws Exception {
+			mockMvc.perform(get("/"))	// makes get request to / path
+				.andExpect(status().isOk()) // waits for 200 OK
+				.andExpect(view().name("home")) // view name should be home
+				.andExpect(content().string(containsString("Welcome to..."))); // content should have ...
+		}
+	}
 
 
+burada 
+	@RunWith(SpringRunner.class) -- diyoruz ki bu test i spring runner ile calistir. yani spring context ine ihtiyacimiz var. bunu explicit bir code mus gibi run edemeyiz demek. bizim testimiz spring mvc icinde ve bu class i test edecek sekilde calidsacak diyoruz
+
+	@WebMvcTest(HomeController.class) -- HomeController icin test yazdigimizi soyluyoruz. bunu yazdiktan sonra bir sonraki 
+
+	@Autowired
+	private MockMvc mockMvc; // Web test for HomeController Injects MockMvc
+
+	mock object i ise bizim HomeController class i olacagini soylemis oluyoruz. bu sekilde mock layacagimiz bean autowire edilmis oluyor.
+
+	Sonrasi bildigimiz @Test ann. icinde ise mock object ini kullaniyoruz. yeterinece acik.
+
+burada dikkat etmek gereken sey mock icin kullanilan method larin dogru yerden gelmesi. onun icin de chapter-1 deki code bakarak daha iyi gorurusun. 
+test olarak da intelloj uzerinden test method una tikla ve sonuclari gor. 
 
 
+Simdi sira pom.xml e ekldegimizi spring dev tools plug in i:
+	- code degisikligi oldugunda atomatic olarak applicatin restart atar
+		dev ortaminda devtools bir classloader bir proje code larini digeri ile ise dependency leri load eder. degisiklik olunca project code larini reload edip SAC a restart atar. kotu taraf ise eger degisilik dependency lerde olursa degisilikligi fark edemez ve restart gerekir.
+	- static content de degisiklik oldugunda browser i restart atar.
+	- template cache isini disable eder ki degisiklikleri her zaman gorebilelim, yoksa cache silip test etmek gerekirdi,
+	- h2 db kullaniyorsan buildin bir console acar
+
+Aslinda biz cok da spring in isine karismadan onun sunduklarini kullanmis olduk. bu nasil oldu. 
+
+Spring autoconfiguration ile ....
+
+hatirla bizim iki tane starter dependency lerimiz vardi.
+	web
+	thymeleaf
+bunlar arasinda benzer dependency ler de var. spring bunlari autoconfiguration ile resolve etti. sonrasinda ise bize bir tane embedded tomcat verdi. thymeleaf in template layout dialect ini olusturdu ve spring mvc framework unu kurdu. ama biz hicbirsey etmedik. spring boot un kendisi onlari bize hazirladi.
+
+yani tam olarak spring autoconfuguration libraru=y leri gordukten sonra;
+	- spring mvc framework icin gerekli olan bean leri olusturarak SAC a ekledi
+	- tomcat i configure ederek SAC a ekledi.
+	- Thymeleaf template lerini kullanarak, spring mvc view larini olusturacak thymeleaf view resolver larini olusturdu ve sac a yukledi.
+
+yani biz sadece code yazdik spring boot bizim icin herkeyi hazirladi.
+
+Spring Dunyasi:
+	- Spring Core:
+		dependency injection framework u ve spring application context inin ve bir cok feature in bulundugu kisim. olmazsa olmaz kisim.
+		spring mvc de buradadir.
+		jdbc, data persistance kismi da bunun icindedir.
+		reactive programlama WebFlux da buradadir.
+	- Spring Boot
+		auto confugration ve starter dependecy ozellikleri basta olmak uzere,
+		- actuator -- application in run time da izlenmesini saglayan tool:
+			- metric lerin durumunu ogrenebilirsin
+			- heap dumps of thread
+			- application health 
+			- environment properties 
+		- spring boot cli -- run time da yonetebilecegin bir application in olmasini saglar. groovy ile calisir.
+	- Spring Data
+		spring de zaten JPA, JDBC tamplate var ama burada spring, java interface leri uzerinden databse islemlerini yapablmemizi saglayan gelistirmeler sagliyor bize.
+	- Spring Security 
+		security islemleri icin spring in sagladigi library dir.
+
+	- Spring batch 
+		diger application larin birbirleriyle iletisime gecmesini saglayab spring ozelligidir.
+
+	- Spring Cloud
+		spring in cloud gelistirmeleri icin sundugu feature lari kapsayan feature dir.
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+Bunlarla birlikte spring e Bismillah demis olduk.
