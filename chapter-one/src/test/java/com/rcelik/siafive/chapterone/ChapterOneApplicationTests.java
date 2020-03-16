@@ -11,22 +11,24 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers;
 
+// means this class is added to spring application context and run in there
 @RunWith(SpringRunner.class)
+// means this is web mvc test for HomeController class and MockMvc autowired object type is HomeController
 @WebMvcTest(HomeController.class)
 class ChapterOneApplicationTests {
 
     @Autowired
-    private MockMvc mockMvc;
+    private MockMvc mockMvc; // mock of HomeController class
 
     @Test
     public final void testHomeController() throws Exception {
-        mockMvc.perform(MockMvcRequestBuilders.get("/"))
+        mockMvc.perform(MockMvcRequestBuilders.get("/")) // perform http get request to the / path
                 .andExpect(MockMvcResultMatchers.status()
-                        .isOk())
+                        .isOk()) // expect status code is 200 OK
                 .andExpect(MockMvcResultMatchers.view()
-                        .name("home"))
+                        .name("home")) // view name is home. means we are inside SAC
                 .andExpect(MockMvcResultMatchers.content()
-                        .string(CoreMatchers.containsString("Welcome to...")));
+                        .string(CoreMatchers.containsString("Welcome to..."))); // content has ...
     }
 
 }
