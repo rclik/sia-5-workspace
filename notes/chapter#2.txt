@@ -1,0 +1,391 @@
+Chapter#2
+
+	covers:
+		- presenting model data in the browser
+		- processing and validating form input
+		- choosing view template library
+
+bu chapter da ornek olarak bir taco web servisi yazilacak,
+	servis ise taco uygulamasi kullanicilarina iceriklerini degistirebilecegi (sunulan iceriklere sadik kalarak) bir web sayfasi yacagiz.
+	burada icerikler static degil de dynamic olmasini istiyoruz onun icin bu icerigin html e eklenemez. db gibi bir yerden okunup yazilmali.
+
+spring mvc de
+	model in is domain datasini persistant olarak tutmak
+	view in gorevi controller dan gelen data yi html render ederek gostermek
+	controller in gorevi ise client dan gelen requeste gore model den data yi fetch edip bussiness logic i de kostuktan sonra view i client a gosterilecek view ile invokr etmek.
+
+
+ilk olarak domain object inden baslanmali.
+
+domain class ini ilk olusturarak bize aslinda neyin lazim oldugunu soylemis oluruz.
+burada lombok kutuphanesini kullaniyoruz, lombok kutuphanesi run time da class icindeki final olan object lerin getters ve setter method larini ekliyor.
+	<dependencies>
+		<dependency>
+			<groupId>org.projectlombok</groupId>
+			<artifactId>lombok</artifactId>
+			<version>1.18.12</version>
+			<optinal>true</optional>
+		</dependency>
+	</dependencies>
+
+
+maven dependency sindaki optional tag i
+	bu bir project in bir dependency si ne true olarak eklendiginde su anlama gelir. bu dependency ana project in compile time inda calismasini saglar. ve sonra eger bu dependency yi kullanan bir code u varsa o zaman classpath e ekler yoksa eklemez.
+
+	A -> B ve B -(optinal)>  C
+
+	B nin bazi feature lari C project ine kullaniyor. C de B nin o feature lari kullanirsa o zaman class path e C ekenecek yoksa eklenmeyecek. ama compile time da hepsi kullanilacaklar.
+
+	buna benzer provided scope var. bu ise sadece compile time da bu dependent library lerin kullanilacagini soyler.
+
+	bu acidan bakildiginda lombok un optional olarak eklenmesi daha iyi bir practice olur.
+
+	@Data
+	@RequiredArgsConstructor
+	public class Ingredients {
+
+	    private final String id;
+	    private final String name;
+	    private final Type type;
+
+	    public enum Type {
+	        WRAP, PROTEIN, VEGGIES, CHEESE, SAUCE
+	    }
+
+	}
+
+	Data ann. lombok icin gereklidir. getter ve setter method larini ekler. RequiredArgsConstructor ise argumanli constructor olusturmak icin kullanilir. 
+
+	controller imiz ise:
+
+	@Slf4j
+	@Controller
+	@RequestMapping("/design")
+	public class DesignTacoController {
+
+	    private static final String VIEW_NAME = "design";
+
+	    private List<Ingredient> ingredients = Arrays.asList(
+	            new Ingredient("FLTO", "Flour Tortilla", Type.WRAP), new Ingredient("COTO", "Corn Tortilla", Type.WRAP),
+	            new Ingredient("GRBF", "Ground Beef", Type.PROTEIN), new Ingredient("CARN", "Carnitas", Type.PROTEIN),
+	            new Ingredient("TMTO", "Diced Tomatoes", Type.VEGGIES), new Ingredient("LETC", "Lettuce", Type.VEGGIES),
+	            new Ingredient("CHED", "Cheddar", Type.CHEESE),
+	            new Ingredient("JACK", "Monterrey Jack", Type.CHEESE), new Ingredient("SLSA", "Salsa", Type.SAUCE),
+	            new Ingredient("SRCR", "Sour Cream", Type.SAUCE)
+	    );
+
+	    @GetMapping
+	    public String showDesignForm(Model model){
+	        // adding type specific ingredients to the view model.
+	        Type [] types = Ingredient.Type.values();
+	        for (Ingredient.Type type : types) {
+	            model.addAttribute(type.toString().toLowerCase(), filterByType(type));
+	        }
+
+	        // add an empty taco object to the view model.
+	        model.addAttribute(VIEW_NAME, new Taco());
+
+	        return VIEW_NAME;
+	    }
+	}
+
+
+	Slf4j ann. Simple Logging Facade for Java kullanimi icin lombok tarafindan sunulan ann. dir. Bu run time da bu class icin logger olusturur.
+	Controller i biliyoruz.
+	RequestMapping ise controller a yani jax rs deki resource a path vermek icin kullanilir. (@Path("/design"))
+	GetMapping ise bu method un verilen resource icin get request lerini karsilayacagini soylemek icin kullanilir.
+
+	method umuz ise icine Model object i alir. bu object ise controller dan view a data tasimak icin kullanilir. key-value pair lari seklikde data lar eklenebilir.
+	mesela burada type name lerine gore list i model e ekliyoruz. ve kullanicin eklemesi icin taco object ini ekliyoruz
+
+	bu object sonunda servlet response object ine kopyalanacaklar, ve view render olurken kullanilacaklar.
+
+	sonra da string sekilde view icin kullanilacak template name ini donduruyoruz. bu request controller da handle edildikten sonra view render edilmesi isine gecilecek ve spring bu return degerine gore view i render edecek. yine biz birseye dokunmuyoruz. tum ayarlari spring boot autoconfiguration yapiyor. bizim classpath de thmeleaf starter project ini gorunce direk olarak thmeleaf bean lerini container ina ekler.
+
+	eger aranan view /src/main/resources/templates altinda yoksa o zaman 404 response doner.
+
+view imiza bakalim:
+view imizin icinde taco type larina gore verilen icerik leri gosteriyoruz. bir checbox seklinde.
+ve altnida bir tane form butonu var. o da taco secimi yaptiktan sonra donecek bir request. ama simdilik ona bakmiyoruz. sonraki asamada ona bakicagiz.
+
+	<!DOCTYPE html>
+	<html lang="en" xmlns="http://www.w3.org/1999/xhtml" xmlns:th="http://www.thymeleaf.org">
+	<head>
+	    <title>Taco Cloud</title>
+	    <link rel="stylesheet" th:href="@{/styles.css}" />
+	</head>
+	... 
+
+ilk olarak buraya bakabiliriz. burada thymeleaf in xmlns:th="http://www.thymeleaf.org" ini kullanacagimizi soyluyoruz.
+artik html icindeki th attribute u thymeleaf in th attribute udur. ayni jsf deki tag library gibi. ornek olarak 
+	th:href="@{/styles.css}"
+kodu relative path deki css class ini getirir. /src/main/resources/static altinda.
+@{} operator is used to context-relative path to static artifiacts.
+
+body icindeki form data sina bakalim:
+...
+	<form method="POST" th:object="${design}">
+...
+
+burada th:object demek form un olusturacigi object demek. yani form dan submit edilirken form data si bu object e marshall edilecek. bu object nedir? aslinda controller daki 
+	...
+		// add an empty taco object to the view model.
+	    model.addAttribute(VIEW_NAME, new Taco());
+	...
+bu object e karsilik geliyor. view_name ise design idi. yani th:object in  icindeki deger. burada biraz karisik olan ise cift tirnak icine dolar isaretiyle belirtilmis design kelimesi. bu da spring in model object indeki attribute umuzun key degeri oluyor.
+
+burada model object imizdeki list verilerimi nasil gosterecegimize bakalim:
+
+...
+    <div class="ingredient-group" id="sauces">
+        <h3>Select your sauce:</h3>
+        <div th:each="ingredient : ${sauce}">
+            <input name="ingredients" type="checkbox" th:value="${ingredient.id}"/>
+            <span th:text="${ingredient.name}">INGREDIENT</span>
+            <br/>
+        </div>
+    </div>
+...
+
+forech gibi bu kod da bu div in altindaki html attribute larini cogullayacak:
+
+	<div th:each="ingredient : ${sauce}"> ...
+
+buradaki ${sauce} bizim model object imizden gelen value su list olan attribute umuzun key i. burada ingredient object i ise for each deki temp object. 
+...
+    <input name="ingredients" type="checkbox" th:value="${ingredient.id}"/>
+    <span th:text="${ingredient.name}">INGREDIENT</span>
+    <br/>
+...
+
+buradaki ingredient object ini artik kullanicuya gosteriyoruz. 
+th:value, input in value sunu set etmek icin kullaniliyor. 
+th:text ise span in text ini doldurmak icin kullaniliyor.
+
+...
+    <h3>Name your taco creation:</h3>
+    <input type="text" th:field="${name}"/>
+    <br/>
+    <button>Submit your taco</button>
+...
+
+buradaki th:field ise input in return edicegi text degeri icin kullanilir. yani design (form data nin) in name i
+
+
+...
+	<form method="POST" th:object="${design}">
+...
+
+form data ya tekrardan bakalim; burada action attribute u yok o zaman form submit edildiginde post request i var olan request in url ine yapilir ve th:object attrubute undeki data request e eklenir. bu sekilde post request i atilis olur.
+
+simdi controller imzda bu post request i handle edecek code u yazalim:
+cok basit olarak sadece bir log ekleyelim. 
+
+    @PostMapping
+    public String processDesign(Taco taco){
+        // taco design object is received here
+        log.info("Processing design: " + taco);
+        // redirect: prefix make Spring to create redirect the request to another url which is /orders/current
+        return "redirect:/orders/current"; // then the page is redirected to another url by Spring Boot
+    }
+
+burada onemli olanlar:
+	method parametresi, bu object in type i ise Taco o da post request inden geliyor. Buradaki <form method="POST" th:object="${design}"> th:object den. o da ilk design.html template ini olusturuken model object ine eklemistik:
+		..,
+			// add an empty taco object to the view model.
+	        model.addAttribute(VIEW_NAME, new Taco());
+	    ...
+
+code ise:
+...
+	@PostMapping
+    public String processDesign(Taco taco){
+        // taco taco object is received here
+        log.info("Processing taco: " + taco);
+        // redirect: prefix make Spring to create redirect the request to another url which is /orders/current
+        return "redirect:/orders/current"; // then the page is redirected to another url by Spring Boot
+    }
+...
+
+burada Model object ine gerek yok cunku yaratilacak bir view yok redirect islemlerinde request e 302 doner. 302 nin icinde ise nereye redirect edilecegini client a soyler. sonra client da o url e get request yapar.
+
+sonrasinda ise bir de controller yazmak lazim. o controller da bir string geri donuyor. o string de yeni form html template i.
+
+	@Slf4j
+	@Controller
+	@RequestMapping("/orders")
+	public class OrderController {
+
+	    @GetMapping("/current")
+	    public final String orderForm(Model model){
+	        log.info("[orderForm] model: {}", model);
+
+	        // new attribute is added to the
+	        model.addAttribute("order", new Order());
+
+	        // will build new form template, orderForm.html
+	        return "orderForm";
+	    }
+	}
+
+basit de bir orderForm.html i yazarsak main/resources/templates altinda.
+
+bu html template ini simdi bir daha gozden gecirelim:
+
+<!DOCTYPE html>
+<html lang="en" xmlns="http://www.w3.org/1999/xhtml" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <title>Taco Cloud - Order</title>
+    <link rel="stylesheet" th:href="@{/styles.css}"/>
+</head>
+<body>
+<form method="POST" th:action="@{/orders}" th:object="${order}">
+    <h1>Order your taco creations!</h1>
+    <img th:src="@{/images/taco-cloud.png}"/>
+    <a th:href="@{/design}" id="another">Design another taco</a>
+    <br/>
+
+    <div th:if="${#fields.hasErrors()}">
+            <span class="validationError">
+                Please correct the problems below and resubmit.
+            </span>
+    </div>
+
+    Processing form submission 43
+    <h3>Deliver my taco masterpieces to...</h3>
+    <label for="name">Name: </label>
+    <input type="text" th:field="*{name}"/>
+    <br/>
+
+    <label for="street">Street address: </label>
+    <input type="text" th:field="*{street}"/>
+    <br/>
+
+    <label for="city">City: </label>
+    <input type="text" th:field="*{city}"/>
+    <br/>
+
+    <label for="state">State: </label>
+    <input type="text" th:field="*{state}"/>
+    <br/>
+
+    <label for="zip">Zip code: </label>
+    <input type="text" th:field="*{zip}"/>
+    <br/>
+
+    <h3>Here's how I'll pay...</h3>
+    <label for="ccNumber">Credit Card #: </label> <input type="text" th:field="*{ccNumber}"/>
+    <br/>
+
+    <label for="ccExpiration">Expiration: </label>
+    <input type="text" th:field="*{ccExpiration}"/>
+    <br/>
+
+    <label for="ccCVV">CVV: </label>
+    <input type="text" th:field="*{ccCVV}"/>
+    <br/>
+
+    <input type="submit" value="Submit order"/>
+</form>
+</body>
+</html>
+
+burada form request i POST ile gidecek, icine de order object i alacak. bir de bu request /orders url ine yapilacagini soyledigimiz action th:action="@{/orders}" request i var.
+
+burada error cikarsa kullanilacak div bu. sonradan kullanilacak.
+	<div th:if="${#fields.hasErrors()}"> kisminda ise daha sonra bakicagiz.
+
+<input type="text" th:field="*{name}"/>
+	burada farkli bir th kullanimi var. ona bakmamiz lazim.
+	digerleri de ayni sekile. sadece bu th kullanimini anlamamiz lazim.
+
+2.2.1 Simple Expressions
+
+Variable Expressions(${...})
+
+When you send data in model object with a controller, you can process them with this syntax.
+
+    <p> Hello <span th:text="${username}"></span> </p>
+We will cover th:... attributes later. Just focus on ${...} part.
+
+Selection Variable Expressions(*{...})
+
+This is another expression to process variables and more convenient for some cases. Instead of picking an object from whole model context, you can select from particular selected context. Let’s clarify this with an example:
+
+<div>
+    <h3 th:text="${post.title}"></h3>
+    <p th:text="${post.excerpt}"></p>
+</div>
+This is standard variable expression. It’s possible to use selection variable expression syntax:
+
+<div th:object="${post}">
+    <h3 th:text="*{title}"></h3>
+    <p th:text="*{excerpt}"></p>
+</div>
+Message Expressions(#{...})
+
+Best way to extract static texts to achieve i8n is using MessageSource. You can process these texts with this syntax.
+
+For instance if you want to process the text below:
+
+  greeting.title=Message Expressions
+You can write:
+
+  <h1 th:text="#{greeting.title}"></h1>
+You can also pass variables to this texts:
+
+  greeting.text=Hello {0}! How are you today?
+with:
+
+  <p th:text="#{greeting.text(${username})}"></p>
+Link URL Expressions(@{...})
+
+There are some attributes that needs URL as input. Thymeleaf provides a good syntax for URLs.
+
+You can
+
+create absolute URLs:
+<a th:href="@{https://google.com}">...</a>
+create Context-relative URLs:
+<a th:href="@{/comments}">...</a>
+Server-relative URLs:
+<a th:href="@{~/posts}">...</a>
+Protocol-relative URLs:
+<a th:href="@{//google.com}">...</a>
+use variables inside URLs with expression preprocessing which process the expression between “__ __” :
+<a th:href="@{/users/__${userId}__/posts}">...</a>
+define URL parameters:
+<a th:href="@{/posts(page=${pageNumber}, tag='java')}"></a>
+Fragment Expressions(~{...})
+
+I think its much harder than it should be for a crash course.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
