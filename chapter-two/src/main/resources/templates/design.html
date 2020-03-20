@@ -15,7 +15,6 @@
             <h3>Designate your wrap:</h3>
             <!--/*@thymesVar id="wrap" type="java.util.List"*/-->
             <div th:each="ingredient : ${wrap}">
-                <!--/*@thymesVar id="ingredient" type="com.rcelik.siafive.model.Ingredient"*/-->
                 <input name="ingredients" type="checkbox" th:value="${ingredient.id}"/>
                 <span th:text="${ingredient.name}">INGREDIENT</span>
                 <br/>

@@ -299,67 +299,205 @@ burada error cikarsa kullanilacak div bu. sonradan kullanilacak.
 <input type="text" th:field="*{name}"/>
 	burada farkli bir th kullanimi var. ona bakmamiz lazim.
 	digerleri de ayni sekile. sadece bu th kullanimini anlamamiz lazim.
+	yani buradaki selection expression kullanmis. bir ust kisminda ise bir variable expression kullanarak ana object i yani context i belirlemis olmasi lazim:
+		...
+		<form method="POST" th:action="@{/orders}" th:object="${order}">
+		...
+	o da order object i.
+	order da ccCVV class instance i var mi? tabii ki var.
 
-2.2.1 Simple Expressions
+thmeleaf expressions:
+	- java object lerini html de kullanabilmemzi saglayan yapilara expression deniyor.
 
-Variable Expressions(${...})
+	1- Variable Expressions(${...})
+		dollar ile olan expression dir.
+		controller dan view a Model objedt ine attribute olarak eklenen object leri alinmasini saglar.
+		...
+    		<p> Hello <span th:text="${username}"></span> </p>
+    	...
+    	controller da ise 
+    	...
+    		model.addAttribute("name", "jack");
+    	...
 
-When you send data in model object with a controller, you can process them with this syntax.
+	2- Selection Variable Expressions(*{...})
+		- yine ayni sekilde model den object almak icin kullanilir.
+		- fark olarak ise burada object in class instanse lerini alabilmemiz saglanir. ama ilk olarak model den object almamiz gerekiyor.
+		- model den object variable expression ile alinir. buna context denir. sonra bunun alt html element lerinde ise selection expression ile o object in class instance leri cagirilir
 
-    <p> Hello <span th:text="${username}"></span> </p>
-We will cover th:... attributes later. Just focus on ${...} part.
+		variable expression
+			<div>
+			    <h3 th:text="${post.title}"></h3>
+			    <p th:text="${post.excerpt}"></p>
+			</div>
+		aynisini selection expression 
+			...
+			<div th:object="${post}">
+			    <h3 th:text="*{title}"></h3>
+			    <p th:text="*{excerpt}"></p>
+			</div>
+			...
 
-Selection Variable Expressions(*{...})
+	3- Message Expressions(#{...})
+		- i8n ile html i object ile update etmemizi saglar. bu sekilde localization isini halletmis oluruz. (MessageResource)
 
-This is another expression to process variables and more convenient for some cases. Instead of picking an object from whole model context, you can select from particular selected context. Let’s clarify this with an example:
+		i8n icin resource dosyamizda resource entry si var:
+			...	
+			greeting.title=Message Expressions
+			...	
 
-<div>
-    <h3 th:text="${post.title}"></h3>
-    <p th:text="${post.excerpt}"></p>
-</div>
-This is standard variable expression. It’s possible to use selection variable expression syntax:
+		o zaman bunu soyle kullanabiliriz:
+			...
+			<h1 th:text="#{greeting.title}"></h1>
+			...
 
-<div th:object="${post}">
-    <h3 th:text="*{title}"></h3>
-    <p th:text="*{excerpt}"></p>
-</div>
-Message Expressions(#{...})
+		ya da parametrik olaran resource entry miz:
+			...
+			greeting.text=Hello {0}! How are you today?
+			...
+		su sekilde html de call edilebilir:
+			...
+			<p th:text="#{greeting.text(${username})}"></p>
+			...
 
-Best way to extract static texts to achieve i8n is using MessageSource. You can process these texts with this syntax.
+	4- Link URL Expressions(@{...})
+		- bazi parametreler ise url olarak verilebilirler.
+			- absolute url vermek icin:
+				<a th:href="@{https://google.com}">...</a>
+			- create Context-relative URLs:
+				<a th:href="@{/comments}">...</a>
+				yani ayni context deki baska bir context e yonlendirme yapmak icin kullanilir.
+			- Server-relative URLs:
+				<a th:href="@{~/posts}">...</a> 
+				sanirim ayni base context e sahip olmasina gerek olmadan baska bir url e yonlendirme yapmak icin
+			- Protocol-relative URLs:
+				<a th:href="@{//google.com}">...</a>
 
-For instance if you want to process the text below:
+		bu sekilde url lerin icine variable lari kullanabiliriz: “__ __” :
+			<a th:href="@{/users/__${userId}__/posts}">...</a>
+		
+		url parameters tanimlayabiliriz (query parameters)
+			<a th:href="@{/posts(page=${pageNumber}, tag='java')}"></a>
+		
+		Fragment Expressions(~{...})
 
-  greeting.title=Message Expressions
-You can write:
 
-  <h1 th:text="#{greeting.title}"></h1>
-You can also pass variables to this texts:
+Validating Form Input
+	simdi ise form validation larini yapacagiz:
 
-  greeting.text=Hello {0}! How are you today?
-with:
+	input validation isini Spring Boot bizim icin yapabilir. bunun icin ayri bir library eklememize gerek yoktur. bu library spring boot starter library sinde trasitive olarak bulur(maven optional dependency gibi sanirim)
 
-  <p th:text="#{greeting.text(${username})}"></p>
-Link URL Expressions(@{...})
+	validation islemine java da bean validation denir ve JSR-303 de aciklanmistir. spring de bu spec e uygun sekilde bean validation i yazmistir.
 
-There are some attributes that needs URL as input. Thymeleaf provides a good syntax for URLs.
+	uc adimda spring bean validation yapilir:
+		1- bean uzerinde yani validation yapilacak class uzerinde annotation lar ile validation rule lari yazilir.
+			- bu bizim icin Taco class idir:
+				...
+				    @NotNull
+				    @Size(min = 5, max = 15, message = "Name must be at least 5 character long")
+				    private String name;
+				...
+				bu kadar. buradaki annotation lar import javax.validation.constraints den geliyorlar ama baska package dan da gelebilirler.
+				hibernate in validation larindan da alabliriz:
+			- order class i
+				...
+				    @NotBlank
+				    private String zip;
+				    @CreditCardNumber
+				    private String ccNumber;
+				    @Pattern(regexp="^(0[1-9]|1[0-2])([\\/])([1-9][0-9])$", message="Must be formatted MM/YY")
+				    private String ccExpiration;
+				    @Digits(integer=3, fraction=0, message="Invalid CVV")
+				    private String ccCVV;
+				...
+				burada hibernate ve javax in kendi validation annotation lari var. bunlar tamamen gecerlidirler.
 
-You can
+		2- bean olusturulacakken bu bean in validation rule lari uygulanacagini soylemek icin @Valid annotation i belirtilir. yani web method u parametresi oncesinde bu annotation yazilmalidir.
+			...
+			    @PostMapping
+			    public String processDesign(@Valid Taco taco, Errors errors){
+			        // error validation occurs then return design template
+			        if(errors.hasErrors()){
+			            return "design";
+			        }
+			        // taco taco object is received here
+			        log.info("[processDesign] taco: {}", taco);
+			        // redirect: prefix make Spring to create redirect the request to another url which is /orders/current
+			        return "redirect:/orders/current"; // then the page is redirected to another url by Spring Boot
+			    }
+    		...
+    		    @PostMapping
+			    public String processOrder(@Valid Order order, Errors errors) {
 
-create absolute URLs:
-<a th:href="@{https://google.com}">...</a>
-create Context-relative URLs:
-<a th:href="@{/comments}">...</a>
-Server-relative URLs:
-<a th:href="@{~/posts}">...</a>
-Protocol-relative URLs:
-<a th:href="@{//google.com}">...</a>
-use variables inside URLs with expression preprocessing which process the expression between “__ __” :
-<a th:href="@{/users/__${userId}__/posts}">...</a>
-define URL parameters:
-<a th:href="@{/posts(page=${pageNumber}, tag='java')}"></a>
-Fragment Expressions(~{...})
+			        if(errors.hasErrors()){
+			            return "orderForm";
+			        }
 
-I think its much harder than it should be for a crash course.
+			        log.info("Order submitted: " + order);
+			        return "redirect:/";
+			    }
+			...
+		3- sonrasinda olusabilecek validation errorlari icin view update edilmelidir.
+			thymeleaf olusan hatalari template de alabilmemiz icin 
+				- fields propery sini suner
+				- th:errors attribute unu sunar. 
+			ikisi de kullanilabilir.
+
+			order html inde: fields attribute unu kullanarak:
+				...
+				    <div th:if="${#fields.hasErrors()}">
+			            <span class="validationError">
+			                Please correct the problems below and resubmit.
+			            </span>
+				    </div>
+				...
+			
+
+View Controller lari kullanarak, controller class larini kullanmadan da url lere view template i atayabiliriz.
+
+	1- WebMvConfigurer ve Configuration Ann. kullanarak
+		yapmamiz gereken bir class yazmak ve basina Configuration ann. koymak
+		sonrasinda class imiz da WebMvConfigurer interface implements eder. bu interface in de method larini override edekeren hangi url e hangi view in gelecegini belirlenir.
+
+			@Configuration
+			public class WebConfig implements WebMvcConfigurer {
+				@Override
+				public void addViewControllers(ViewControllerRegistry registry) {
+					registry.addViewController("/").setViewName("home");
+				}
+			}
+
+	2-  Spring Application class ina bir method yazarak:
+
+		@SpringBootApplication
+		public class TacoCloudApplication implements WebMvcConfigurer {
+			public static void main(String[] args) { 
+				SpringApplication.run(TacoCloudApplication.class, args);
+			}
+
+			@Override
+			public void addViewControllers(ViewControllerRegistry registry) {
+				registry.addViewController("/").setViewName("home"); 
+			}
+		}
+
+		yaptigimiz is bir onceki ile ayni. farki ise annatation kullanmadan yapmis olmamiz. spring in bu class i zaten aya kaldiracagindan ve bu method u call edeceginden annotation ve dolayisiyla baska bir annotation ve bean e gerek kalmadi. ama configuration class i yazilsa daha iyi bir practice olur. 
+
+		burada yapilan ise url-view mapping, ama sorunlu cunku sadece GET request lerini verilen template lere yonlendiriyor. aradaki bussiness logic ise simdilik yok.
+
+spring baska template library kullanmana izin verir.
+bunlardan
+	FreeMarker
+	Groovy Templates 
+	JavaServer Pages (JSP) 
+	Mustache
+	Thymeleaf
+
+baska template library kullanmak icin sadece yapmak gereken library sini dependency olarak eklemek ve du ana kadar yazilmis olan template html lerinin benzerini yazmak.
+
+sadece jsp de sorun var. jsp icin bir dependency yazmamiza gerek yok cunku onun kendisi bir servlet. bunun da bir kotu tarafi var. cunku embedded tomcat kullanarak jsp kullanmamiz zor. servlet jsp class larini WEB-INF altinda istiyor. oysaki onlar baska yerlerde. /src/main/resources/templates altindalar.
+ama war file ile output verirsen, yani traditional web application deployment yapacaksan, o zaman sorun cikmaz.
+
 
 
 
