@@ -28,7 +28,5 @@ target/
 build/
 
 ### VS Code ###
-.vscode/
-
-notes/*.pdf
+.vscode
 .DS_Store
