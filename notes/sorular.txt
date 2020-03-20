@@ -1,0 +1,1 @@
+chapter-2 de eger template reload zamaninda template de kullanilan object controller da set olmazsa ne olur.
