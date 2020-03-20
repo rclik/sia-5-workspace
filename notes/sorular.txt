@@ -1,1 +1,3 @@
-chapter-2 de eger template reload zamaninda template de kullanilan object controller da set olmazsa ne olur.
+chapter-2 
+	1:S- eger template reload zamaninda template de kullanilan object controller da set olmazsa ne olur.
+	2:C- template olusturulurken exception atiyor yani 500 yiyoruz. cozum olarak ise ya controller dan attribute doldurmalisin ya da template de property nin exits olup olmadigina bakmalisin.
