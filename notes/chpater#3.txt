@@ -1,0 +1,532 @@
+Spring Persistency
+
+Spring hem Jdbc hem de jpa yi support eder. 
+
+bu isinini kullanmandan direk connection acarak da database islemleri yapabiliriz ama onunla daha zor calisiriz.
+
+Spring Jdbc yi Kullanmak
+	domain de bir data object imiz olsun, onun da daha iyi serch edilebilmesi ve daha iyi identifier edilebilmesi icin ona bir field verelim, o da id olsun.
+
+	ilk data object imiz Taco
+		new id fields 
+		createdAt field (date)
+
+	benzer olarak Order da
+		new id ve placedAt(date)
+
+	lombok will provide accessors at run time.
+
+	Jdbc template icin starter dependency i ekleyelim;
+		<dependency> 
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-jdbc</artifactId>
+		</dependency>
+	Db olarak da h2 db yi kullanabiliriz. onun jdbc ve ona ait ozellikleri kullanabilmek icin onun starter dependency sini ekleyelim:
+		<dependency> 
+			<groupId>com.h2database</groupId> 
+			<artifactId>h2</artifactId> 
+			<scope>runtime</scope>
+		</dependency>
+	run time scope unda olmasina dikkat et!
+
+	Repository ekleyelim:
+		repository class lari database islemlerinin yapildigi class lardir. 
+		ilk olarak bu class icin bir interface olusturup icine hangi operasyonlari kullanarak ne donecegimizi soylememiz gerekiyor.
+
+		operasyonlarimiz
+			tum taco lari don
+			id ye gore taci don
+			kaydet olsun.
+
+		bir tane interface imiz olsun
+
+		bir tane bunu implement eden class imiz olsun
+
+		bu class JdbcTemplate object i autowire etsin:
+
+		    private JdbcTemplate jdbcTemplate;
+
+		    @Autowired
+		    public JdbcIngredientRepository(JdbcTemplate jdbcTemplate) {
+		        this.jdbcTemplate = jdbcTemplate;
+		    }
+
+		bu sekilde, constructor dan autowire yaparsak, test yazilmasini saglariz.
+		ve class a repository annotation i eklememiz lazim. bu annotation streotype annotation dir yani birden fazla annotation i icerir. bunun icerdigi annotation lar ise Controller ve Component dir.
+		bu sekilde SAC bu repository bean ini bulur ve ayaga kalkarken create eder.
+
+		reposiyory ornegi olarak;
+		...
+		    public Ingredient save(Ingredient ingredient) {
+		        log.info("[save] ingredient: {}", ingredient);
+		        jdbcTemplate.update(
+		                "insert into Ingredient (id, name, type) values (?, ?, ?)",
+		                ingredient.getId(),
+		                ingredient.getName(),
+		                ingredient.getType().toString()
+		        );
+
+		        return ingredient;
+		    }
+		...
+
+		burada genel bir yaklasim var. ilk olarak query sonrasi ise verilecek degeler.
+
+		save islemi icin jdbcTemplate inin update method unu kullanabiliriz. buradaki insert sql ine dikkat etmek lazim. Class name imiz table name e karsilik geliyor. class field lari da table in field laridir.
+
+		bu class i server class inda kullanalim; autowire ile yapmamiz gerekecek ve constructor veya method da inject edersek daha iyi 
+
+		    @Autowired
+		    public DesignTacoController(JdbcIngredientRepository repository) {
+		        this.repository = repository;
+		    }
+
+		    @GetMapping
+		    public String showDesignForm(Model model) {
+		        log.info("[showDesignForm] model: {}", model);
+
+		        // return ingredients form database
+		        List<Ingredient> ingredients = new ArrayList<>();
+
+		        // convey all ingredients to controller class objects
+		        repository.findAll().forEach( ingredient -> ingredients.add(ingredient));
+
+		        // adding type specific ingredients to the view model.
+		        Type[] types = Ingredient.Type.values();
+		        for (Ingredient.Type type : types) {
+		            model.addAttribute(type.toString().toLowerCase(), filterByType(type, ingredients));
+		        }
+
+		        // add an empty taco object to the view model.
+		        model.addAttribute(Templates.TACO_DESIGN, new Taco());
+
+		        model.addAttribute(Attributes.TACO_NAME, "taco1");
+
+		        return Templates.TACO_DESIGN;
+		    }
+
+		burada anlamadigim bir sey controller class ina SessionAttributes("order") eklenmesi o ne ise yariyor?
+
+	preloading data ve initial sql script i kosmak.
+
+		ilk olarak kullanilacak table lari olustrumak lazim
+		bu table olusturma kodlari ise app ayaga kalkarken db ye load edilmesi lazim.
+		table larimiz:
+			taco_order
+			taco_order_tacos (tacoOrder(bigint), taco (bigint))
+			taco
+			taco_ingredients (taco (bigint), ingredient (varchar))
+			ingredient
+
+		bu table sql leri static content de olusturacagimz schema.sql file inda yazilacak. spring ise ayaga kalkarken bu file i bulacak ve load edicek. /src/main/resources
+			create table if not exists Ingredient(
+			    id varchar(4) not null,
+			    name varchar (25) not null,
+			    type varchar (10) not null
+			);
+
+			create table if not exists Taco(
+			    id identity,
+			    name varchar (50) not null,
+			    createdAt timestamp not null
+			);
+
+			create table if not exists Taco_Ingredients(
+			    taco bigint not null,
+			    ingredient varchar (4)
+			);
+
+			alter table Taco_Ingredients
+			    add foreign key (taco) references Taco(id);
+
+			alter table Taco_Ingredients
+			    add foreign key (ingredient) references Ingredient(id);
+
+			create table if not exists Taco_Order(
+			    id identity,
+			    deliveryName varchar(50) not null,
+			    deliveryStreet varchar(50) not null,
+			    deliveryCity varchar(50) not null,
+			    deliveryState varchar(2) not null,
+			    deliveryZip varchar(10) not null,
+			    ccNumber varchar(16) not null,
+			    ccExpiration varchar(5) not null,
+			    ccCVV varchar(3) not null,
+			    placedAt timestamp not null
+			);
+
+			create table if not exists Taco_Order_Tacos (
+			    tacoOrder bigint not null,
+			    taco bigint not null
+			);
+
+			alter table Taco_Order_Tacos
+			    add foreign key (tacoOrder) references Taco_Order(id);
+			alter table Taco_Order_Tacos
+			    add foreign key (taco) references Taco(id);
+
+		burayi yorumlamak lazim.
+
+		simdi initial data load edelim:
+			onun icin de ayni yere /src/main/resources folder in altinda data.sql sql icinde veriyoruz.
+
+
+
+	h2 url ine ulasmak icin 
+		http://localhost:8080/h2-console url ini kullanmak lazim
+		orada cikan ekranda jdbc url ine ise: jdbc:h2:mem:testdb
+		kullanici adi sa, password yok
+
+	TacoRepository sinin olusturulmasi:
+		ilk olarak JdbcTemplate i inject ediyoruz:
+			...
+			    private final JdbcTemplate jdbcTemplate;
+
+			    @Autowired
+			    public JdbcTacoRepository(JdbcTemplate jdbcTemplate) {
+			        this.jdbcTemplate = jdbcTemplate;
+			    }
+			...
+
+		sonra save method una bakalim:
+			save method u uc kisimdan olusacak. ilki Taco object inin db tablosuna save edilmesi. bu method bir long id donecek. sonra da bu donen id araciligiyla ingredient lerin taco ile iliskisini veren taco_ingredients tablosunun guncellenmesi. en son da taco object inin donulmesi.
+
+			...
+			    @Override
+			    public Taco save(Taco taco) {
+			        long tacoId = saveTacoInfo(taco);
+			        taco.setId(tacoId);
+			        // time to save ingredients
+			        for (Ingredient ingredient : taco.getIngredients()) {
+			            saveIngredientToTaco(ingredient, tacoId);
+			        }
+
+			        return taco;
+			    }
+
+			taco object inin taco table ina save edilmesi.
+			burada onemli olan table in primary key ini generate edebilmek icin kullandigimiz yapidir. bu yapi ise prepared statement ve keyholder la yapilir. prepared statement ile insert sql i yazilir. sonra da keyholder ile yeni primary key generate edilmek icin kullanilir. sonra bu ikisi birlikte jdbc update method u ile calistirilir. database islem sonucu save edilen id donulur.
+			...
+
+			    private long saveTacoInfo(Taco design) {
+			        design.setCreatedAt(new Date());
+
+			        PreparedStatementCreator psc = new PreparedStatementCreatorFactory(
+			                "insert into Taco (name, createdAt) values (?, ?)",
+			                Types.VARCHAR,
+			                Types.TIMESTAMP
+			        ).newPreparedStatementCreator(
+			                Arrays.asList(
+			                        design.getName(),
+			                        design.getCreatedAt().getTime()
+			                )
+			        );
+
+			        KeyHolder keyHolder = new GeneratedKeyHolder();
+			        jdbcTemplate.update(psc, keyHolder);
+
+			        return keyHolder.getKey().longValue();
+			    }
+			...
+
+			donulen id, generated value dur. bu id araciligiyla ingredient ile taco lar baglanacaktir. o islem de taco object inin tum ingredient leri icin calisacak olan ...
+
+			    private void saveIngredientToTaco(Ingredient ingredient, long tacoId) {
+			        jdbcTemplate.update(
+			                "insert into Taco_Ingredients (taco, ingredient) values (?,?)",
+			                tacoId,
+			                ingredient.getId());
+			    }
+
+			method udur. burada yeni birsey yok. jdbc template inin update method unu kullanarak, sadece sql ve value lari veriyoruz.
+
+	--- elimizde Db de var olan Ingredient data larini tutan taco object i vardi. biz taco yu ve taco-ingredient iliskisini tutan tabloyu guncelledik.
+	tabi repository class ina @Repository annotation ini kullanmayi unutma.
+
+	simdi bu repo class ini controller a inject et.
+
+	-- DesignTacoController daki processDesign() method una bakalim.
+
+	bize request ler arasinda kullanacagimiz order attribute u lazim ve sadece request bazli kullancagimiz taco attribute u lazim.
+
+	tum request ler arasinda bir model attribute u olusturmak icin class ustune bir annotation yerlestiriyoruz:
+		
+		...
+		@SessionAttribute(name = "order")
+		public class DesignController{
+		...
+	
+	sonra class icinde bir tane Order return eden method yaz ve onun ustune @ModelAttribute annotation i ekle:
+
+		@ModelAttribute(name = "order")
+		public Order order(){
+			return new Order();
+		}
+
+	burada dikkat etmemiz gereken sey, ModelAttribute ann. icindeki name degeri SessionAttribute attribute unun name i ile ayni.
+
+	buradan sunu cikarabiliriz, ilk olarak model attribute u her request olusturuldugunda o request icin bir model attribute i olusturulur. o da method la gerceklestirilir. sonra eger class-level annotation da SessionAttribute u varsa ve onun name i de model attribute u ile eslesiyorsa, o zaman bu model attribute u session icin de tutulur. request ler arasinda redirect ler ile de tasinir.
+
+	simdi bir de taco attribute u olusturalim;
+
+		@ModelAttribute( name = "taco")
+		public Taco taco(){
+			return new Taco();
+		}
+
+	bu model object her request atildiginda yeniden olusturulur, ama class-level da attirbute olarak tutulmadigindan baska request lerde kullanilmaz.
+
+	buradaki session dan kasit kullanicin session i degil. yani kullanici olmasina gerek yok. jsessionid ye gore yapiliyor.
+
+		
+	PreparedStatement yerine daha basit bir sekilde id generate ederek ekleme yapabiliriz.
+	Bu islemi ise SimpleJdbcInsert islemi ile yapabliriz.
+
+	order reporsitory sine gecelim ve orada SimpleJdbcInsert i kullanicagiz.
+	yine JdbcTemplate e ihtiyacimiz var. Bu kere class instance i olarak degil de yine autowired olarak inject edicegiz. sonra da contuctor icinde onu kullanicagiz. 
+
+	@Autowired
+	public JdbcOrderRepository(JdbcTemplate jdbcTemplate) {	
+        orderInserter = new SimpleJdbcInsert(jdbcTemplate).withTableName("Taco_Order").usingGeneratedKeyColumns("id");
+        orderTacoInserter = new SimpleJdbcInsert(jdbcTemplate).withTableName("Taco_Order_Tacos");
+        objectMapper = new ObjectMapper();
+    }
+
+    constructor icinde object leri initialize ettik. burada generate edilecek table field name ini veriyoruz.
+
+    objectMapper ise json isleri icin kullanilacak. 
+
+    save islemi icin:
+
+    public Order save(Order order) {
+		order.setPlacedAt(new Date());
+		long orderId = saveOrderDetails(order); 
+		order.setId(orderId);
+		List<Taco> tacos = order.getTacos();
+		for (Taco taco : tacos) {
+      		saveTacoToOrder(taco, orderId);
+		}
+    	return order;
+    }
+
+    buradan da o private method lari yazalim. mantik ayni ilk olarak order i sonra da iliski tablosunu guncellemek.
+
+    save edeken de mantigimiz su, ilk olarak object i object mapper ile olustur sonra inserter mapper ile calissin. (mapper ise bir map instance i donuyor. yani hashmap creator olarak kullaniliyor.)
+
+    private long saveOrderDetails(Order order) {
+	    @SuppressWarnings("unchecked")
+	    Map<String, Object> values = objectMapper.convertValue(order, Map.class); values.put("placedAt", order.getPlacedAt());
+		
+		long orderId = orderInserter.executeAndReturnKey(values).longValue();
+
+		return orderId;
+	}
+
+	private void saveTacoToOrder(Taco taco, long orderId) { 
+		Map<String, Object> values = new HashMap<>(); 
+		values.put("tacoOrder", orderId);
+		values.put("taco", taco.getId()); 
+
+		orderTacoInserter.execute(values);
+	}
+
+
+	simdi bunu controller da kullanalim:
+
+	@Controller
+	@RequestMapping("/orders")
+	@SessionAttributes("order")
+	public class OrderController {
+	  	private OrderRepository orderRepo;
+		
+		public OrderController(OrderRepository orderRepo) { 
+			this.orderRepo = orderRepo;
+		}
+
+		@GetMapping("/current")
+		public String orderForm() {
+			return "orderForm";
+		}
+	  
+	  	@PostMapping
+	  	public String processOrder(@Valid Order order, Errors errors, SessionStatus sessionStatus){
+			if (errors.hasErrors()) { 
+				return "orderForm";
+			}
+			orderRepo.save(order); 
+			sessionStatus.setComplete();
+			return "redirect:/";
+		}
+	}
+
+	burada cok degisiklik yapildi ama daha temiz bir hal aldi. Burada ilk goze batan SessionAttributes annotation i ve SessionStatus class i. Burada sunu soyluyoruz; database islemi yapildiktan sonra session i resetle. bu da gidecek, session daki order element ini ve diger element varsa onlari silecek.
+	eger boyle birsey yapmazsak, session uzerine eklenen tum attribute lari tutacakti. sonra da bunu yonetmek cok zor olacaktir. 
+	aslinda session tutmak cok iyi bir kullanim degil ama duruma gore ihtiyacimiz olabiliyor.
+
+	burada SessionAttributes daki order attribute u aslinda getOrderForm da kullanilan order olacaktir. session attribute undaki order i getOrderForm method unda orderForm template ini html e ceviriken kullanicaz. kullanacagiz.
+
+Simdi ise Spring Data Kullanarak Database islemlerini yapicagiz. Spring data nin bize sunduklari:
+	- spring data jpa - jpa ile spring data kullandigimiz
+	- spring data mogodb
+	- spring data Neo4j - graph database mis
+	- spring data redis (redis key-value store)
+	- spring data cassandra (cassandra database ine islem yapma)
+
+ilk olarak spring data yi project imize eklmemiz lazim:
+	<dependency> 
+		<groupId>org.springframework.boot</groupId> <artifactId>spring-boot-starter-data-jpa</artifactId>
+	</dependency>	
+
+bu starter project i spring boot a jpa yi verir. jpa in uygulamacisi hibernate dir. starter dependenvy sinde transitive olarak hibernate bulunur. eger onun disinda baska bir jpa kullanilmak istenirse hibernate i exclude etmek gerekir.
+
+<dependency> <groupId>org.springframework.boot</groupId> <artifactId>spring-boot-starter-data-jpa</artifactId> <exclusions>
+<exclusion> <artifactId>hibernate-entitymanager</artifactId> <groupId>org.hibernate</groupId>
+    </exclusion>
+  </exclusions>
+</dependency>
+<dependency>
+<groupId>org.eclipse.persistence</groupId> <artifactId>eclipselink</artifactId> <version>2.5.2</version>
+</dependency>
+
+
+ilk olarak entity class inin entity oldugunu belirtmemiz lazim. onn icin class a @Entity annotation i koyuyoruz.
+
+...
+@Entity
+public class Ingredient{
+
+}
+
+class in unique id sini ise @Id annotation i ile belirtiyoruz.
+
+	... 
+	@Id
+	private final String id;
+	...
+
+bir de jpa entity class inin no-argument constructor i olmasini ister. Bunu lombok un NoArgsConstructor i ile yapabliriz. 
+
+ama bizim class instance lari final oldugundan bu sekilde kullanamayiz. o zaman no-arg constructor imizi private edebiliriz. bir ikincisi ise class attribute lari final olduklarindan lombock dan generate edilen constructor inda null degeri vermek. onu da force true ann. name parametresi ile yapiyoruz.
+
+@NoArgsConstructor(access=AccessLevel.PRIVATE, force=true)
+private non-argument constructor ve tum property leri de doldurulmus sekilde.
+
+sonunda class uzerindeki annotation lar soyle oluyorlar:
+
+@Data
+@RequiredArgsConstructor @NoArgsConstructor(access=AccessLevel.PRIVATE, force=true) @Entity
+
+Taco class i icin ise 
+
+@Entity
+
+id nin auto generated oldugunu ve id oldugunu soylemek icin;
+	@Id
+	@GeneratedValue (strategy = GenerationType.Auto)
+	private Long id;
+
+sonra taco ile ingredients table lari arsindaki iliskiyi gostermek icin ise 
+
+@ManyToMany(targetEntity=Ingredient.class)
+private List<Ingredient> ingredients;
+
+bir de prepersist annotation i var. bu da record kaydedilmeden hemen once kosulacak olan method larin basina konur.
+
+	@PrePersist
+    void createdAt() {
+		this.createdAt = new Date(); 
+	}
+
+yani taco persist edilmeden hemen once bu method call edilir.
+
+simdi order class ina gecelim:
+
+class icin olusturulacak database tablosunun ismini verelim:
+	...
+	@Table(name="Taco_Order")
+	public class Order implements Serializible{
+		...
+	}
+
+bu degiiskligi yapmamizin sebebi ise order keyword unun sql de bir karsiliginin olmasi. yoksa sql calisirken problem olusabileceginden table in name ini degistirdik.
+
+entity ler tamam, repository object lerini olusturalim:
+
+spring jpa bize CrudRepository adinda bir interface sunuyor. bu database islemlerini yapabilmemizi sagliyor. biz de bunu interface i extends eden bir interface daha yaziyoruz. onun icine de method larimizi yazicagiz. 
+
+public interface IngredientRepository
+         extends CrudRepository<Ingredient, String> {
+}
+
+CrudRepository iki tane generic class definition i aliyor. bunlarin bir tanesi entity class i ikincisi ise primary key class inin tipi.
+
+
+bunlardan sonra isimiz tamamdir. diger entity class lari icin farkli yapilcak tek sey onlara gire repo larin olusturulmasidir.
+
+
+simdi mesela zipCode larina gore order lari donmesini istegin bir sorgu yazacaksin:
+	order repo sunun altinda:
+		List<Order> findByDeliveryZip(String deliveryZip);
+
+bu kadar. bu islemi yaparken spring jpa, method name ini parse ediyor. ona gore islem yapiyor. o zaman buradaki method a findBy<EntityClassInstanceName> seklinde isim verilmedir. Ayrica method parametresine ise ntityClassInstanceName verilmelidir.
+
+
+burada bakicalacak entity nin ORDER oldgunu ise kullanilan repository den anliyor.
+find dan sonra Order da yazabilirdik ama bunu sjpa cikarabiliyor.
+
+verilen time range e ve verilen zip code a gore donen method yazalim:
+	List<Order> readOrdersByDeliveryZipAndPlacedAtBetween (String deliveryZip, Date startDate, Date endDate)
+
+burada ise read yerine get ve find kullanilabilir.
+Orders ise bizim table name inin object class karsiligi. optional, istersen kullanma
+By dan sonrasi ise hangi parameter lara gore query yazilacagi
+DeliveryZip bunlardan bir tanesi 
+digeri ise placedAt
+sonraki Between ise sql deki between, placedAt den sonra gelmis, o zaman onun icin between kosacak
+o zaman bize 3 tane de parametre lazim, bunlarin isimleri de onemli, ilki deliveryZip ikincisi startDate, ucuncusu ise endDate
+
+s_jpa in verdigi default method lar:
+
+IsAfter,
+After,
+IsGreaterThan, 
+GreaterThan 
+IsGreaterThanEqual, 
+GreaterThanEqual
+IsBefore, 
+Before, 
+IsLessThan, 
+LessThan
+IsLessThanEqual,
+LessThanEqual
+IsBetween, 
+Between
+IsNull
+Null
+ IsNotNull, NotNull  IsIn, In
+ IsNotIn, NotIn
+ IsStartingWith, StartingWith, StartsWith
+Summary 83
+ IsEndingWith, EndingWith, EndsWith  IsContaining, Containing, Contains  IsLike, Like
+ IsNotLike, NotLike
+ IsTrue, True
+ IsFalse, False
+ Is, Equals
+ IsNot, Not
+ IgnoringCase, IgnoresCase
+
+List<Order> findByDeliveryToAndDeliveryCityAllIgnoresCase(
+        String deliveryTo, String deliveryCity);
+
+AllIgnoresCase demek string comparison yaparken kucuk-buyuk harf esitligini dikkate almamasi demek.
+
+Order by i da kullanabilrsin
+List<Order> findByDeliveryCityOrderByDeliveryTo(String city);
+
+son olarak kendi sql query ini de yazabilirsin:
+
+@Query("Order o where o.deliveryCity='Seattle'")
+List<Order> readOrdersDeliveredInSeattle();
+
+
+
