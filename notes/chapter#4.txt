@@ -1,0 +1,493 @@
+Spring Security
+
+spring application imizi guvenli sekilde kullanabilmemiz icin spring boot security starter i gelistirmistir. cok basit bir sekilde sadece yapmamiz gereken spring security starter project ini project iimize tanimlamamizdir.
+
+<dependency>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-security</artifactId>
+</dependency>
+
+bu islem sonrasinda spring boot app i ayaga kalkarken bu dependency yi gorecek ve ona gore autoconfiguration ozelligi ile bazi ayarlar yaparak application imizi ayaga spring security ozellikleriyle kaldiracak.
+
+bu islem sonrasinda application imizi ayaga kaldirdiktan sonra app in herhangi bir sayfasina request atildiginda bizi bir default login sayfasina yonlendirecek SAC. oradan login olmamizi sonra resource a ulasmamizi isteyecek. ama kullanicimiz yok. aslinda bizim icin bir kullanici da olusturacak. ismi user, password u ise auto-generated olacak olusturulacak ve application in log file inda yazacak. oradan alabiliriz.
+
+yani spring autoconfiguration bizim icin spring security ozelliklerini kurmus oldu. tek yapilmasi gereken, spring security starter dependency sini pom xml e yazmak.
+
+bizim icin spring autoconfiguration ne yapmisti;
+    - app icindeki tum resource lar authentication gerektirmesini sagladi.
+    - bu authentication isinde bir role e gerek yok. tum islemler default bir role ile iliskilendirilmis gibi calisiyor.
+    - duzgun bir login page i olusturmadi ama bir sayfaya yonlendirdi.
+    - http basic authentication ile authentication ayarlari yapildi.
+    - bir tane user olusturdu ve password unu bize log file da soyledi.
+
+tesekkurler autoconfiguration. ama bunlar bize yetmez. Simdi biz security islerini kendimiz configure edelim:
+
+taco cloud u yeniden olusturalim.
+
+sadece spring security starter dependency sini include ederek soyle bir configuration class i olusmus oldu:
+
+@Configuration
+@EnableWebSecurity
+public class SecurityConfig extends WebSecurityConfigurerAdapter {
+
+}
+
+bu class spring security icin yukarda yazdgigimiz ozellikleri active eder.
+dikkat etmemiz gereken noktalat class dan farkli olarak ise annotation lar. onlari ekledikten sonra SAC bu class i configuration class i olarak gorup bean seklinde ayaga kaldiriyor.
+
+spring security bize su sekilde user store lari kullanmamiza izin verir:
+    - in memory user store
+    - jdbc-based user store
+    - ldab based user store
+    - a custom user detail service
+
+Bunlardan hangisini kullanirsaniz kullanin, sadece WebSecurityConfigurerAdapter class ini implement edip configure method unu override etmemiz yeterlidir.
+
+In memory User Store
+    test ortam lari icin kullanilir. app ayaga kalkarken SAC bu object e verdigimiz user lari memory e alir. authentication i da o user lardan saglar
+
+    @Override
+    protected void configure(AuthenticationManagerBuilder auth) throws Exception {
+        auth.inMemoryAuthentication().withUser("rahman").password("{noop}rahman").authorities("ROLE_USER").and()
+                                    .withUser("admin").password("{noop}admin").authorities("ROLE_ADMIN");
+    }
+
+    burada dikkat edilmesi gereken sey spring 5 ile password un saklanilmasi icin kullanilmasi gereken algoritma yi belirtmemiz gerektigi.
+    {noop} password demek password un plain text olarak tutulacagini soyluyoruz. eklemezsek exception atiyor.
+
+Jdbc Based User Store
+    DataSource ile yapabiliriz.
+
+    Bu yontem, direk olarak spring security nin bize sagladigi DataSource bean ini kullanarak yapilir. Bu datasource object i username ve password u kendi sql cumlesine gore kosacak. bu sql ler ise:
+
+    public static final String DEF_USERS_BY_USERNAME_QUERY =
+        "select username,password,enabled " +
+        "from users " +
+        "where username = ?";
+    public static final String DEF_AUTHORITIES_BY_USERNAME_QUERY =
+        "select username,authority " +
+        "from authorities " +
+        "where username = ?";
+    public static final String DEF_GROUP_AUTHORITIES_BY_USERNAME_QUERY =
+        "select g.id, g.group_name, ga.authority " +
+        "from groups g, group_members gm, group_authorities ga " + "where gm.username = ? " +
+        "and g.id = ga.group_id " +
+        "and g.id = gm.group_id";
+
+    bu sql lere uygun database tablolarini olusturmamiz ve tablolari isimize yarayacak sekilde doldurmamiz gerekir.
+
+    onlar da kodda var.
+
+
+    sonrasinda ise ayni ilk inde benzer olarak sadece username ve password yerine spring in sundugu datasource bean ini autowire ile alarak auth object ine datasource olarak vericegiz. sonrsinda ise spring 5 ile zorunlu hale gelen password encoder i ayarlarmamiz gerekiyor. onun icin ise yine auth object ine passwordEncoder method uyla PasswordEncoder interface ini implement eden bir class vericegiz. bu ise bizim icin simdilik onemli olmadigindan un implemented method lari isimize yarar sekilde guncellemek lazim.
+
+
+        private DataSource dataSource;
+
+        @Autowired
+        public void setDataSource(DataSource dataSource) {
+            this.dataSource = dataSource;
+        }
+
+        @Bean
+        public PasswordEncoder passwordEncoder() {
+            return new PasswordEncoder() {
+                @Override
+                public String encode(CharSequence charSequence) {
+                    return charSequence.toString();
+                }
+
+                @Override
+                public boolean matches(CharSequence charSequence, String s) {
+                    return true;
+                }
+            };
+        }
+
+        @Override
+        protected void configure(AuthenticationManagerBuilder auth) throws Exception {
+            auth.jdbcAuthentication().dataSource(dataSource).passwordEncoder(passwordEncoder());
+        }
+
+    bu kadar.
+
+    buna ek olarak spring in query lerinin yerine kendi query lerimizi de yazabiliriz. bu durumda yine spring in DataSource object ini kullanacagiz ama kosacagi query leri biz verecegiz:
+    Bir onemli ayrinti ise sadece authentication ve basic authorization query lerinin degistirilebilmesidir.
+
+        @Override
+        protected void configure(AuthenticationManagerBuilder auth) throws Exception {
+            auth.jdbcAuthentication().dataSource(dataSource)
+                .usersByUsernameQuery(
+                    "select username, password, enabled from Users " +
+                    "where username=?")
+                .authoritiesByUsernameQuery(
+                    "select username, authority from UserAuthorities " +
+                    "where username=?");
+        }
+
+    sonrasinda ise buradaki sql query lerine gore database table larimizi guncelleyebiliriz.
+
+Password Ecoding
+    kullanici password lerini eger db ye direk olarak yazarsak, bir hacker db ye ulasinca butun kullanicilarin passwordlerini alabilir. ancak eger bir hash algoritmasiyla hash ledikten sonra db ye yazarsak, hacker kullanici password lerini gorse de bir ise yaramaz. bu problemi gidermek icin spring bize bir den fazla hashing algoritma saglar. ayrica kendi encoder imizi yazmamizi da saglar.
+
+    Spring Security nin bizim icin sagladigi password encoding algoritma lari:
+        - BCryptPasswordEncoder   -- BCript algorithm
+        - NoOpPasswordEncoder     -- no encoding
+        - Pbkdf2PasswordEncoder   -- applies PBKDF2 encryption
+        - SCryptPasswordEncoder   -- applies script encoder algorithm
+        - StandardPasswordEncoder -- applies standard SHA-256 encoder
+
+    kendi algorithm imizi de PasswordEncoder interface ini implement ederek yazabiliriz.
+
+        public interface PasswordEncoder {
+            String encode(CharSequence rawPassword);
+            boolean matches(CharSequence rawPassword, String encodedPassword);
+        }
+    
+    buradaki matches method u db deki password leri karsilastirmak icin kullanilir. encode da passowrd un encode islemi icin.
+
+LDAP ile authentication yapilmasi:
+
+Customizing User Authentication:
+    bu kere kendi authenticatiom mekanizmamisizi kuralim.
+
+    taco uygulamasi icin, kullanicilarin name i password unun yaninda addressleri de olsun. 
+
+
+    burada spring security yi kullanabilmemiz icin User class imiz Spring Security nin UserDetails interface ini implement etmesi gerekiyor.
+
+    UserDetails interface i isExprired, getAuthorities gibi fonksiyonel bilgileri donuyor.
+
+    Genel olarak su sekilde:
+
+        @Data
+        @NoArgsConstructor(access = AccessLevel.PUBLIC, force = true)
+        @RequiredArgsConstructor
+        @Entity
+        public class User implements UserDetails {
+
+            @Id
+            @GeneratedValue(strategy= GenerationType.AUTO)
+            private Long id;
+            private final String username;
+            private final String password;
+            private final String fullName;
+            private final String street;
+            private final String city;
+            private final String state;
+            private final String zip;
+            private final String phoneNumber;
+
+
+            @Override
+            public Collection<? extends GrantedAuthority> getAuthorities() {
+                return Arrays.asList(new SimpleGrantedAuthority("ROLE_USER"));
+            }
+
+            @Override
+            public String getPassword() {
+                return password;
+            }
+
+            @Override
+            public String getUsername() {
+                return username;
+            }
+
+            @Override
+            public boolean isAccountNonExpired() {
+                return true;
+            }
+
+            @Override
+            public boolean isAccountNonLocked() {
+                return true;
+            }
+
+            @Override
+            public boolean isCredentialsNonExpired() {
+                return true;
+            }
+
+            @Override
+            public boolean isEnabled() {
+                return true;
+            }
+        }
+
+    Sonrsinda ise bu user i database de tutabilmek icin bir repository class i yazalim:
+
+        public interface UserRepository extends CrudRepository<User, Long>{
+            User findByUserName(String userName);
+        }
+    
+    Dikkat edecek olursan burada @Repository annotation ini kullanmadik. cunku CrudRepository bizim icin o annotation i sagliyor.
+    
+    Sonrasinda ise bir bu class icin service yazalim. Bu service icin interface yazmamiza gerek yok. Spring Security nin sundugu UserDetailService interface ini implement edebiliriz:
+
+
+        @Service
+        class UserService implements UserDetailsService {
+
+            private final UserRepository userRepository;
+
+            @Autowired
+            public UserService(UserRepository userRepository) {
+                this.userRepository = userRepository;
+            }
+
+            @Override
+            public UserDetails loadUserByUsername(String userName) throws UsernameNotFoundException {
+                User user = userRepository.findByUserName(userName);
+
+                if (user == null)
+                    throw new UsernameNotFoundException(String.format("User with name %s not found", userName));
+
+                return user;
+            }
+        }
+
+    bu class da dikkat edilmesi gereken sey ise @Service annotation i. Bu da spring e bu class in bir bean olarak ayaga kaldirilacagini soylemekdir. Daha specific olmak gerekirse ServiceBean
+
+    Son olarak bu custom service i spring security ye user service olarak bildirmek:
+
+        @EnableWebSecurity
+        @Configuration
+        public class CustomUserServiceSecurityConfig extends WebSecurityConfigurerAdapter {
+
+            private final UserDetailsService userDetailsService;
+
+            @Autowired
+            public CustomUserServiceSecurityConfig(UserDetailsService userDetailsService) {
+                this.userDetailsService = userDetailsService;
+            }
+
+            @Override
+            protected void configure(AuthenticationManagerBuilder auth) throws Exception {
+                auth.userDetailsService(userDetailsService).passwordEncoder(encoder());
+            }
+
+            @Bean
+            public PasswordEncoder encoder(){
+                return new StandardPasswordEncoder("53cr3t");
+            }
+        }
+    basit olarak bu da bitti. burada onemli olan islerden bir tanesi password encoder u yazarken basina bean annotation i koymak. bu sekilde yapildiginda SAC bunun bir bean olarak ayaga kaldirilacagini gorur. ona gore bir bean olusturur. bu sekilde ne zaman bu method call edilirse spring call u intercept eder ve yarattigi bean i doner. Yani o object tekrar tekrar yaratilmaz.
+
+
+Kullanicilari register edelim:
+
+    spring boot bize bir ekran sagladi ama kendi register sayfamizi olusturalim:
+
+    bir tane controller yazalim.
+
+    bir get mepping i olsun, bir de post mapping i olsun. get mapping de registration form u geri donecegiz, post mapping de ise login web service ine redirect edicegiz. (post mapping te de login edebiliriz ama olsun)
+
+        @Controller
+        @RequestMapping("/register")
+        @Slf4j
+        public class RegistrationController {
+
+            private final UserRepository userRepository;
+            private final PasswordEncoder passwordEncoder;
+
+            // this password encoder will come from CustomUserServiceSecurityConfig
+            @Autowired
+            public RegistrationController(UserRepository userRepository, PasswordEncoder passwordEncoder) {
+                this.userRepository = userRepository;
+                this.passwordEncoder = passwordEncoder;
+            }
+
+            @GetMapping
+            public final String getRegistrationForm(){
+                return "registrationForm";
+            }
+
+            @PostMapping
+            public final String processRegistration(RegistrationForm registrationForm){
+                userRepository.save(registrationForm.toUser(passwordEncoder));
+                return "redirect:/login";
+            }
+        }
+
+    burada ayrinti olan birsey yok. sadece passoword encoder object inin CustomUserServiceSecurityConfig sinifinda olusturdugumuz passoword encoder bean i olmasindan baska.
+
+    buradaki RegistrationForm object ise bir dto olarak kullaniliyor. ve uzerinden de gercek db object ine ceviriliyorlar.
+    onemli olan bir nokta ise lombok un argumented constructor unun argument lerinin sirasi is class instance larinin eklenis sirasina gore olmasidir.
+
+    Simdi ise hangi url lerin auth lazim hangilerine lazim degil ona karar verelim:
+        bu islemi WebSecurityConfigurerAdapter in configure methodu ile yapiyoruz.
+
+            @Override
+            protected void configure(HttpSecurity http) throws Exception {
+                ...
+            }
+        
+        buradaki http object ine islem yapicagiz. mesela register, login ve ana sayfa disindaki leri authentication gerektirsin:
+
+            @Override
+            protected void configure(HttpSecurity http) throws Exception {
+                http.authorizeRequests()
+                        .antMatchers("/design", "/orders").hasAnyRole("USER_ROLE")
+                        .antMatchers("/", "/**").permitAll();
+            }
+        bu kadar. deisign ve orders disindaki tum url lere izin verdik. dikkat edilmesi gereken konu ise bu rule larin sirasi. ilk olarak permitAll rule ini verseydik, design ve orders url leri icin authentication gerekmeyecekti.
+        buradaki hasRole casistiramadim. hasAuthority calisti. cunlu UserDetails den gelen method getAuthorities method unu kullandigimizdan sanirim.
+
+        burada spring in kendi baska rule method lari var:
+            access(String)              -- verilen Spring Expression Language a uygun luguna gore
+            anonymous()                 -- anonymous kullanicilar icin
+            authenticated()             -- authenticated kullanicilar icin 
+            denyAll()                   -- hicbir condition a gerek kalmadan izin verilmez
+            fullyAuthenticated()        -- yeni authenticate olan user lar icin, remember olanlar icin degil
+            hasAnyAuthority(String...)  -- bu authority lerden birine sahip olanlar icin
+            hasAnyRole(String...)       -- bu rollerden birine sahip olanlar icin
+            hasAuthority(String)        -- bu authority e sahip olanlar
+            hasIpAddress(String)        -- bu ip addressine sahip olanlar icin
+            hasRole(String)             -- bu role sahip olanlar icin
+            not()                       -- diger access method larinin disinda kalanlari belirlemek icin
+            permitAll()                 -- herkese acik
+            rememberMe()                -- remember me ile hatirlanan kullanicilar icin
+
+        bu yukardakileri kullanarak cilgin seyler yapabilirsiniz.
+        mesela sali gunleri authentication i kaldirabilirsiniz:
+
+        protected void configure(HttpSecurity http) throws Exception {
+            http .authorizeRequests()
+                    .antMatchers("/design", "/orders")
+                        .access("hasRole('ROLE_USER') && " +
+                            "T(java.util.Calendar).getInstance().get("+ 
+                            "T(java.util.Calendar).DAY_OF_WEEK) == " + 
+                            "T(java.util.Calendar).TUESDAY")
+                    .antMatchers(“/”, "/**").access("permitAll") ;
+        }
+        
+Simdi kendi login page imizi tanimlayalim:
+    bunu tanimlamak da cok kolay. Yine WebSecurityConfigurerAdapter class inin HttpSecurity li method unda HttpSecurity object ine eklemeler yapacagiz.
+        .formLogin().loginPage("login);
+    ne zaman login olmamis bir kullanici gelse ve login olmaya calissa SAC onu bu safyaya yonlendirecek.
+
+    burada ismini verdigimiz login page ise template altindaki bir view imiz olacak. O Kadar. bir de onemli olan access rule larindan sonra login kurallarini yazarken .and() method unu cagirmak. bu sekilde birbirlerini baglamis olursun.
+
+    bir diger onemli nokta ise login page inin disaridan ulasilabilir olmasi. yani bir controller inin olmasi, onun icin bir controller yazabiliriz yada direk olarak WebMvcConfigurer interface ini kullanarak bir configuration bean i olusturup onun uzerinden bir controller olusturabiliriz.:
+    bunun amaci ise login url inin custom login page ini tanimlanmasi ve sonra login basarili olduktan sonra gidecegi default page olan home page inin tanimlanmasini saglamaktir. home ve login icin ayri controller lar da yazilabilir.
+
+
+        @Configuration
+        public class TacoWebConfig implements WebMvcConfigurer {
+
+            @Override
+            public void addViewControllers(ViewControllerRegistry registry) {
+                registry.addViewController("/").setViewName("home");
+                registry.addViewController("/login");
+            }
+        }
+
+    bu sekilde bir de home page i yazalim ki login successfull olduktan sonra home page ine yonlendirsin.
+
+    home page ini degistirmek icin ise sunu yapabilliriz:
+
+        .formLogin()
+            .loginPage("/login")
+            .defaultSuccessUrl("/design")
+
+    eger login den once hangi sayfadaysa sonrasinda oraya yonlendirilir. onu da su sekilde zorlayabiliriz
+
+        .formLogin()
+            .loginPage("/login")
+            .defaultSuccessUrl("/design", true)
+
+    yani burada login sonrasindaki default page e zorlamak icin kullanilir.
+
+    burada yaptigimiz is, /login url ine login.html i maplamak, GET ile. ve / aurleine home.html ini setlemek.
+
+        .and().formLogin()
+            .loginPage("/login")
+            .loginProcessingUrl("/authenticate")
+            .usernameParameter("user")
+            .passwordParameter("pwd")
+
+        burada login kullanici ve password bilgisini veiryoruz. login processing url ini veriyoruz.
+
+    simfi login success olursa hangi url e yonlendirilmesini soyleyelim:
+
+    spring security h2 nun login ini de bozuyor. onun icin ikisinin de ayni zamanda nasil duzgun calisacagini bulmak gerekiyor.
+
+    bu ise baslayallim, sonra geri doneriz.
+
+    spring security yi starter dependency olarak ekledigimiz de direk olarak bozuyor. ilk dependency eklendiginde kullanici adi olarak user ve app loglarindaki user password unu girersek ilk asama olan spring security login page ini geciyoruz ama o onemli degil. sonrasinda ilerleyemiyoruz.
+
+
+Logout icin
+
+    .and() 
+        .logout()
+            .logoutSuccessUrl("/")
+    
+default icin /logout url i kullanilir. direk olarak bu url kullanildiginda logout olunuyor
+bunu editleyebiliriz. bi tane page ekleyebliriz. logout sornsinda success url de eklenebilir.
+
+
+<<<<<<<<<<<<<<<<<<- spring security ve h2 console ->>>>>>>>>>>>>>>>>>>>
+
+sadece spring boot security eklendikten sonra verilen user ve password ile login olunca h2-console u sayfasini goruyoruz ama bir alt sayfasina ulasamiyoruz. hata 403 formidden. sanirim user kullanicisinin yetkisi yok. cunku ayni kullanici bilgileriyle design a ulasabiliyorum.
+
+permit all yaparak, login kisitlamasini kaldirdim, bu sekilde login olmadan h2-console a ulasabildim. ama login olamadim. forbidden aldim. 
+
+sonrasinda ise csrf ve frame options security kisitlamalarini kaldirdim. o zman calisti. cunku h2 console bu security kisitlamalari ile calisiyorlar.
+
+    @EnableWebSecurity
+    @Configuration
+    public class ConfigForH2Console extends WebSecurityConfigurerAdapter
+    {
+
+        @Override
+        protected void configure(HttpSecurity httpSecurity) throws Exception {
+            httpSecurity.authorizeRequests().antMatchers("/h2-console/**").permitAll();
+            httpSecurity.csrf().disable();
+            httpSecurity.headers().frameOptions().disable();
+
+            super.configure(httpSecurity);
+        }
+    }
+bu sekilde kullanilabilir, ama production icin uygun degil. uygulamamizi guvenlik zaafiyeti demek anlamina geliyor.
+
+
+altinda ise super class inin configuration ini kullaniyoruz. cunku onu cagirmazsak diger url lerin de authentication i olmaz.
+
+
+Kullaniciyi anlayayip ona gore islem yapmabilmek icin login olan kullanici bilgilerine ulasmamiz lazim. bunu bize spring bircok data uzerinden verir.
+
+    - inject a Principal into controller s method
+    - inject an Authentication object into controller s method
+    - using SecurityContextHolder to get the spring security context 
+    - use @AuthenticationPrincipal annotated method
+
+
+    Principal injection into the controller method:
+        @PostMapping
+        public String processOrder(@Valid Order order, Errors errors, SessionStatus sessionStatus, Principal principal) {
+            String userName = principal.getName(); // returns the username of the user
+
+            User user = userRepository.findUserByName(userName);
+
+        }
+
+    but it is better to use Authentication object injection to the controller method.
+
+        @PostMapping
+        public String processOrder(@Valid Order order, Errors errors, SessionStatus sessionStatus, Authentication authentication) {
+            User user = authentication.getPrincipal(); // returns the user object which is better 
+
+        }
+
+    more cleaner one is AuthenticationPrincipal annotation
+        @PostMapping
+        public String processOrder(@Valid Order order, Errors errors, SessionStatus sessionStatus, @AuthenticationPrincipal User user) {
+            // user is here
+        }
+
+    or you can get it from SecurityContextHolder. Since SecurityContextHolder can be accessible from anywhere, the username can be reached more flexibly.
+
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        User user = (User) authentication.getPrincipal();

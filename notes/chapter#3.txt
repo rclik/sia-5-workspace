@@ -374,7 +374,8 @@ Simdi ise Spring Data Kullanarak Database islemlerini yapicagiz. Spring data nin
 
 ilk olarak spring data yi project imize eklmemiz lazim:
 	<dependency> 
-		<groupId>org.springframework.boot</groupId> <artifactId>spring-boot-starter-data-jpa</artifactId>
+		<groupId>org.springframework.boot</groupId> 
+		<artifactId>spring-boot-starter-data-jpa</artifactId>
 	</dependency>	
 
 bu starter project i spring boot a jpa yi verir. jpa in uygulamacisi hibernate dir. starter dependenvy sinde transitive olarak hibernate bulunur. eger onun disinda baska bir jpa kullanilmak istenirse hibernate i exclude etmek gerekir.
