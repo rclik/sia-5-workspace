@@ -1,0 +1,393 @@
+REST in Spring
+
+    SPA or MPA
+        kesin biri digerinden ustundur denemez. Hepsinin kendine gore avantajlari vardir. SPA de REST server dan doner client da o REST leri kullanarak UI i gunceller. Bu sekilde mobile application ini da yazabilirsin. Ama MPA de bu esneklik yoktur. Sadece bir UI gelistirilebilir.
+
+    Spring Http request leri icin su annotation lara sahiptir.
+        PostMapping
+        GetMapping
+        PutMapping
+        PatchMapping
+        DeleteMapping
+        RequestMapping (http method unu bu annotation icinde veririz. genel olarak isimdir. )
+
+    GetMapping
+
+    Baslamadan Once Project in Tasarlanmasi:
+
+        project de lombok, spring dev-tools, spring starter jpa ve web (rest icin), db icin ise h2 kullanilacak, import lari ona gore ekle.
+
+        project 6 ana package dan olusacaktir: api, config, data, domain, security, web
+
+        ilk olarak domain object lerini ekledim: Ingredient, Taco
+            Ingredient
+                Entity annotation i, 
+                no-arg constructor JPA icin gerekli, class instanse lari final oldugundan force true olmali, constructor olustugunda eklenmemis leri null olarak atar
+            
+            Taco
+                Entity annotation, Id annotation primary key icin 
+                auto generated olmasi icin @GeneratedValue kullanilir. strategy si Auto olarak
+                     @GeneratedValue(strategy = GenerationType.AUTO)
+                relation vermek: diger class da eger ilgi yoksa gerek yok, bu class a dependency vermeye
+                    @ManyToMany(targetEntity = Ingredient.class)
+                insertion olmadan date bilgisi eklemek icin 
+                    @PrePersist annotation i kullandik.
+
+        profile eklenmesi:
+            prod profile i icin logging level degistirildi
+
+                logging:
+                    level:
+                        com.rcelik.sia.chapterfive: DEBUG
+                ---
+                spring:
+                    profiles: prod
+
+                logging:
+                    level:
+                        com.rcelik.sia.chapterfive: WARN
+                
+        profile a gore datafill yapildi:
+            bunun icin 
+                bir configuration annotation i class olusturuldu.
+                configuration class inin hemen altina ise profile annotation i kullanilarak hangi profile larda bunun kullanilacagi yazildi.
+                icinde ise repository class lari inject edilerek data fill islemleri yapildi.
+
+                    @Profile("!prod")
+                    @Configuration
+                    public class DevelopmentConfig {
+                    ...
+
+                icine ise Bean annotation i kullanilarak bir CommandLineRunner object i return eden method yazildi.
+                ...
+                    public class DevelopmentConfig {
+
+                        @Bean
+                        public CommandLineRunner dataLoader(IngredientRepository ingredientRepository, TacoRepository tacoRepository){
+                            log.debug("[dataLoader] is called");
+                            return new CommandLineRunner() {
+                                @Override
+                                public void run(String... args) {
+                                    ingredientRepository.save(new Ingredient ....)
+                ...
+                bu configuration class i JPA load olduktan sonra calisiyor. Ilk olarak configuration class i load ediliyor. Sonra icindeki bean load ediliyor. Bu bean inin CommandLineRunner donmesi onemli o sekilde Spring data lari load edecegini anliyor. yine bu islem icin once configuration class inin profile i olmasi onemli. configuration annotation i olmazsa spring icerigini load etmez. sonra da bean annotation i ise yaramaz.
+
+        project tamamlandi.
+
+    Simdi controller a bakarlim:
+        controller da get mapping yapiliyor.
+
+        ...
+            @RestController
+            @RequestMapping(path="/design", produces="application/json")
+            @CrossOrigin(origins="*")
+            @ConfigurationProperties(prefix = "taco.orders")
+            public class DesignTacoController {
+        ...
+
+        @RequestMapping annotation ini biliyoruz. Rest resource imiz disaridan alacagimiz resource umuzun ozelliklerini belirtiyoruz.
+            resource umuzun URL path i design olacak.
+            resource umuz application/json return edicek.
+
+        @CrossOrigin annotation i: ise CORS spec ine gore, bir web page in farkli host daki resource dan cevap alabilmeleri icin alinacak yerin CORS header larini duzgun sekilde dolsurmasi lazimdir. Yoksa web page buna izin vermez.
+
+        @ConfigurationProperties annotation i ise configuration property lerini kullanabilmek icin.
+        unutma icine ayrica configuration parameter isminde bir class instance i olusturman ve bu instance icin ise bir tane setter method u eklemen gerekiyor.
+        configuration property ise SAC load olurken load olur.
+
+        @RestController annotation i ise SAC a bean olarak tanimlanmasi gibi bir annotation ama fark olarak, handler method larinin return value lerinin direk olarak response body ye yazilacak sekilde olmasini saglar. 
+        RestController in yerine Controller da kullanabilirsin. Ama service method larinin uzerinde @ResponseBody annotation i ekleyeceksin ve method ResponseEntity object i dondurmesi gerekecek.
+
+        @GetMapping with Pageable
+
+            @GetMapping("/recent")
+            public Iterable<Taco> getRecentTacos(){
+                log.debug("[getRecentTacos] is called");
+                Pageable pageable = PageRequest.of(0, pageSize, Sort.by("createdAt").descending());
+
+                return tacoRepository.findAll(pageable).getContent();
+            }
+
+        ilk 20 elemani dondurmek icin spring data nin sagladigi Pageable interface i kullanilabilir.
+
+        @GetMapping with PathVariable
+            @GetMapping("/{id}")
+            public ResponseEntity<Taco> getTacoById(@PathVariable("id") Long id){
+                log.debug("[getTacoById] id: {}", id);
+                Optional<Taco> taco = tacoRepository.findById(id);
+                if(taco.isPresent()){
+                    return new ResponseEntity<>(taco.get(), HttpStatus.OK);
+                }
+
+                return new ResponseEntity<>(null, HttpStatus.NOT_FOUND);
+            }
+
+        GET method u icin url den path variable ini aliyoruz. sonra onu method patametresine annotation ile setliyoruz.
+        ResponseEntity ile geri donmek mantikli cunku bulunmayinc 404 donmek daha mantikli.
+
+        @PostMapping
+            @PostMapping(consumes = "application/json")
+            @ResponseStatus(HttpStatus.CREATED)
+            public Taco createTaco(@RequestBody Taco taco){
+                log.debug("[createTaco] taco: {}", taco);
+                return tacoRepository.save(taco);
+            }
+            
+        consumes application json demek, json tipinde request body si bekliyoruz demek
+        @ResponseStatus ise response code u vermenin bir yolu
+        @RequestBody ise request den gelen body sinin java object ine marshall edilerek alinmasi
+
+
+        PUT vs PATCH
+            PUT method u verilen tum data yi db dekiyle gunceller. resource un bir property si verilmezse onu da null bilgiyle gunceller. Ama patch resource un sadece verilen property lerini gunceller. aralarindaki fark budur.
+
+                @PutMapping(consumes = "application/json", path = "/{orderId}")
+                public final void updateOrder(@RequestBody Order order, @PathVariable(name = "orderId") Long id) {
+                    log.debug("[updateOrder] id {}, order: {}", id, order);
+                    Optional<Order> foundOrder = orderRepository.findById(id);
+                    foundOrder.map( value -> {
+                        log.debug("[updateOrder] found order: {}", value);
+                        order.setId(orderId);
+                        orderRepository.save(order);
+                        return new ResponseEntity(order, HttpStatus.OK);
+                    }).orElseGet(() -> {
+                        log.debug("[updateOrder] found order: {}", order);
+                        return new ResponseEntity(null, HttpStatus.NOT_FOUND);
+                    });
+                }
+            
+            patch in bir problemi var, client nerden bilecek eklemedigi parametrenin ayni kalacagini? Bunlari kullaniciya soylemek gerekir.
+
+        DeleteMapping
+            Delete islemleri icin http delete method u kullanilir. response code olarak 200 ok de donulebilir. Ama 204 donmek daha dogrudur. Cunku 204 un anlami bu resource silinmistir. daha bu resource ile bize gelmeyiniz demektir.
+
+            @DeleteMapping(path = "/{orderId}")
+            public ResponseEntity<Order> deleteOrderById(@PathVariable(name = "orderId") Long id){
+                log.debug("[deleteOrderById] id: {}", id);
+
+                try {
+                    orderRepository.deleteById(id);
+                    return new ResponseEntity<>(HttpStatus.NO_CONTENT);
+                } catch (EmptyResultDataAccessException e) {
+                    log.error("[deleteOrderById] cannot be deleted since {}", e.getMessage());
+                    return new ResponseEntity<>(null, HttpStatus.NOT_FOUND);
+                }
+            }
+
+    Enabling Hypermedia
+        Client api yi nasil ogrenecek sorusunun cevabidir. Client attigi bir request in cevabindan bu reseource la neler yapabilcegini ogrenmesidir.
+
+        Bir taco list i gosteren bir JSON:
+
+        [
+            {
+            "id": 4,
+            "name": "Veg-Out",
+            "createdAt": "2018-01-31T20:15:53.219+0000", "ingredients": [
+            {"id": "FLTO", "name": "Flour Tortilla", "type": "WRAP"},
+            {"id": "COTO", "name": "Corn Tortilla", "type": "WRAP"},
+            {"id": "TMTO", "name": "Diced Tomatoes", "type": "VEGGIES"},
+            {"id": "LETC", "name": "Lettuce", "type": "VEGGIES"},
+            {"id": "SLSA", "name": "Salsa", "type": "SAUCE"}
+            ]
+            }, ...
+        ]
+
+        bunun hyper media ile gosterilmis hali:
+
+        {
+            "_embedded": {
+                "tacoResourceList": [
+                    {
+                        "name": "Veg-Out",
+                        "createdAt": "2018-01-31T20:15:53.219+0000",
+                         "ingredients": [
+                                {
+                                    "name": "Flour Tortilla", "type": "WRAP",
+                                    "_links": {
+                                    "self": { "href": "http://localhost:8080/ingredients/FLTO" }
+                                }
+                    }, 
+                    {
+                        "name": "Corn Tortilla", "type": "WRAP",
+                        "_links": {
+                            "self": { "href": "http://localhost:8080/ingredients/COTO" }
+                        } 
+                    },
+                    {
+                        "name": "Diced Tomatoes", "type": "VEGGIES",
+                        "_links": {
+                            "self": { "href": "http://localhost:8080/ingredients/TMTO" }
+                        }
+                    },
+                    {
+                        "name": "Lettuce", "type": "VEGGIES",
+                        "_links": {
+                            "self": { "href": "http://localhost:8080/ingredients/LETC" }
+                        }
+                    }, 
+                    {
+                        "name": "Salsa", "type": "SAUCE",
+                        "_links": {
+                            "self": { "href": "http://localhost:8080/ingredients/SLSA" }
+                        }
+                    }
+                ],
+                "_links": {
+                    "self": { "href": "http://localhost:8080/design/4" }
+                } 
+            },
+            ...
+            ] },
+            "_links": {
+                "recents": {
+                "href": "http://localhost:8080/design/recent"
+                }
+            }
+        }
+
+    self link i resource un kendisinin url dir. Client o URL den o resource a ulasabilir.
+    links link inden de api icinde gezebiilr.
+
+    HATEOAS i spring de kullanmak cok kolay, 
+
+    starter project ekliyoruz pom a:
+        <dependency> 
+            <groupId>org.springframework.boot</groupId> 
+            <artifactId>spring-boot-starter-hateoas</artifactId>
+        </dependency>
+
+    sonra ise link ve self property lerini eklememiz icin code da degisiklikler yapmamiz lazim.
+    yapilacak degisiklikler ise controller class inda olmasi gerekiyor.
+
+    iki seklimiz var, resource ve resources.
+
+    ona gore controller donecegi object i wrap leyecegiz. 
+
+    list donen bir method dan ilerleyelim:
+    
+        @GetMapping("/recent")
+        public Iterable<Taco> getRecentTacos(){
+            log.debug("[getRecentTacos] is called");
+            Pageable pageable = PageRequest.of(0, pageSize, Sort.by("createdAt").descending());
+
+            return tacoRepository.findAll(pageable).getContent();
+        }
+
+    bu bir list donuyor. bunun HATEOAS ile yapalim. Kullancagimiz Resources olacak;
+
+        @GetMapping("/recent")
+        public Resources<Resource<Taco>> recentTacos() {
+            PageRequest page = PageRequest.of( 0, 12, Sort.by("createdAt").descending());
+            List<Taco> tacos = tacoRepo.findAll(page).getContent();
+            
+            Resources<Resource<Taco>> recentResources = Resources.wrap(tacos);
+            recentResources.add( new Link("http://localhost:8080/design/recent", "recents"));
+
+            return recentResources;
+        }
+
+    yapilan is cok basit. bussiness logic in dondugu object i wrap lemek. ve sonunda o method un url ini eklmek.
+    bu yukaridaki object in su kismini olusturur:
+        ...
+            "_links": {
+                "recents": {
+                "href": "http://localhost:8080/design/recent"
+                }
+            }
+        ...
+
+    yapilani sunun ile de yapabiliriz:
+        Resources<Resource<Taco>> recentResources = 
+        Resources.wrap(tacos); recentResources.add(
+            ControllerLinkBuilder.linkTo(DesignTacoController.class)
+            .slash("recent")
+            .withRel("recents")
+            );
+    bu daha iyi bir yaklasim oldu.
+
+    okunmasi kolay olmasi acisindan soyle de yapabilirsin:
+        Resources<Resource<Taco>> recentResources = Resources.wrap(tacos); 
+        recentResources.add(
+            linkTo(methodOn(DesignTacoController.class).recentTacos())
+            .withRel("recents")
+        );
+
+    simdi de resource assembler olusturalim. Bu da bussiness object imizi wrap edicek.
+
+        public class TacoResource extends ResourceSupport {
+            @Getter
+            private final String name;
+            @Getter
+            private final Date createdAt;
+            @Getter
+            private final List<Ingredient> ingredients;
+
+            public TacoResource(Taco taco) { 
+                this.name = taco.getName();
+                this.createdAt = taco.getCreatedAt();
+                this.ingredients = taco.getIngredients(); 
+            }
+        }
+    
+    burada onemli olan ResourceSupport class inin extend edilmesi. Gerisi ise sadece getter method larinin lazim olgudu bir class in yazilmasi. Icinde ise class property lerini ile ayni isimde olan bir wrapper yazmis olduk.
+
+    burada Taco class indan istemedigimiz instance lari yazmiyoruz. O da bizim avantaj oluyor. Client bu bilgileri bilmiyor.
+
+    simdi bunlari convert edicek class i yazalim;
+
+
+        public class TacoResourceAssembler extends ResourceAssemblerSupport<Taco, TacoResource> {
+            public TacoResourceAssembler() { 
+                super(DesignTacoController.class, TacoResource.class);
+            }
+
+            @Override
+            protected TacoResource instantiateResource(Taco taco) {
+                return new TacoResource(taco);
+            }
+
+            @Override
+            public TacoResource toResource(Taco taco) {
+                return createResourceWithId(taco.getId(), taco); 
+            }
+        }
+    
+    simdi ikisini birlestirelim:
+
+    @GetMapping("/recent")
+    public Resources<TacoResource> recentTacos() {
+        PageRequest page = PageRequest.of(0, 12, Sort.by("createdAt").descending());
+        List<Taco> tacos = tacoRepo.findAll(page).getContent();
+        
+        List<TacoResource> tacoResources = new TacoResourceAssembler().toResources(tacos);
+
+        Resources<TacoResource> recentResources = new Resources<TacoResource>(tacoResources);
+        recentResources.add( 
+            linkTo(methodOn(DesignTacoController.class).recentTacos())
+            .withRel("recents")
+        );
+        
+        return recentResources;
+    }
+
+    json da donecegimiz isimleri ise kod icinde belirleyeebiliriz.
+    wrapper class inin uzerine su annotation i kullanilir:
+        @Relation(value="taco", collectionRelation="tacos")
+        public class TacoResource extends ResourceSupport {
+            ...
+        }
+    artik bu class tekli resource icin taco, coklu icin ise tacos u kullanicaktir.
+    bu class lari ise web api icinde yazmak daha mantikli olacaktir.
+
+    Spring Data Rest
+        bu starter ise senin spring data icin yazdigin tum class lar icin rest api olusturur. hem de hateoas li.
+        hicbirsey yazmana gerek kalmaz. development ortami icin birebirdir. 
+        sadece repository kismini yazman yeterlidir. buna application.yml dosyasinda bir path verip diger api lerden ayirabilirsin:
+            spring:
+                data:
+                    rest:
+                        base-path: /api
+        gibi. sonrasida bu url den spring data rest calisir.
+
+        bu na custom controller da yazabilirsin.
