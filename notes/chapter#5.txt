@@ -149,7 +149,7 @@ Configuration Properties:
 
         Buradaki pageable degerini configution olarak alabiliriz. bunu properties dosyasindan alabilmek icin:
 
-            ,,,
+            ...
             @ConfigurationProperties(prefix="taco.orders")
             public class OrderController {
                 private int pageSize = 20;
@@ -250,7 +250,7 @@ Configuration Properties:
             export SPRING_PROFILES_ACTIVE=prod,audit,ha
             (run time da ne yapar bilmiyorum, ayni property leri birbirlerini ezer sanirim )
 
-        yaml da:
+        yml da:
 
         spring:
             profiles:
