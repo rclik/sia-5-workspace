@@ -1,0 +1,100 @@
+Rest Client Yazmak
+    3 tane var bunlar:
+        - rest template (spring core)
+        - traversion (hateoas in sundugu rest client)
+        - webclient spring 5 ile gelen yeni rest client
+
+    Rest template
+        java nin servlet api uzeriden sundugu daha ilkel library ler kullanilarak rest client da yazilabilir. ama bu bize xok bos kod yazdirir. bunun yerine RestTemplage ile daha kolay sekilde rest client yazabiliriz.
+
+        - delete(...) -- http delete method, with given url. returns ResponseEntity, taken by returning response body
+        - exchange(...) -- applying any wanted http method, returns ResponseEntity 
+        - getForEntity(...) -- applying any wanted http method, returns object drived from response body
+        - getForObject(...) --  http get method, with given url. returns ResponseEntity, taken by returning response body
+        - headForHeaders(...) --  http head method, with given url. returns HttpHeaders object, taken by returning response body
+        - optionsForAllow(...) --  http options method, with given url. returns allowed http methods
+        - patchForObject(...) --  http patch method, with given url. returns ResponseEntity, taken by returning response body
+        - postForEntity(...)  -- http post method, with given url. returns ResponseEntity, taken by returning response body
+        - postForLocation(...) --  http post method, with given url. newly created object taken by returning response body
+        - postForObject(...) --  http post method, with given url. returns ResponseEntity, taken by returning response body
+        - put(...) --  http put method, with given url. returns ResponseEntity, taken by returning response body
+
+        to define RestTemplage object, need to define a bean in the project:
+            @Bean
+            public RestTemplate restTemplate() {
+                return new RestTemplate();
+            }
+
+        Bu kadar, sonrasinda ise bu bean i inject edip kullanicaz.
+
+        bu kullanim sekli:
+
+        ...
+            public Ingredient getIngredientById(String ingredientId) {
+                return rest.getForObject("http://localhost:8080/ingredients/{id}", Ingredient.class, ingredientId);
+            }
+        ...
+
+        bu kadar kolay bir sekilde inject edilen rest object i uzerinden rest request i edilebilir.
+
+        url parameter larini eklemek icin baska bir yontem daha var. o da bir parameters map i olusturarak onu rest template method una vermek:
+
+            public Ingredient getIngredientById(String ingredientId) { 
+                Map<String,String> urlVariables = new HashMap<>(); 
+                urlVariables.put("id", ingredientId);
+
+                return rest.getForObject("http://localhost:8080/ingredients/{id}", Ingredient.class, urlVariables);
+            }
+
+        ayn islemi UriComponentsBuilder kullanarak rest template object inden ayri bir object uzerinden de yapabiliriz:
+
+            public Ingredient getIngredientById(String ingredientId) { 
+                Map<String,String> urlVariables = new HashMap<>(); 
+                urlVariables.put("id", ingredientId);
+
+                URI url = UriComponentsBuilder.fromHttpUrl("http://localhost:8080/ingredients/{id}")
+                            .build(urlVariables);
+                
+                return rest.getForObject(url, Ingredient.class);
+            }
+
+        gelen object i de bir bakalim: 
+
+            public Ingredient getIngredientById(String ingredientId) {
+                ResponseEntity<Ingredient> responseEntity =
+                    rest.getForEntity("http://localhost:8080/ingredients/{id}", Ingredient.class, ingredientId);
+                // get Fetched time
+                log.info("Fetched time: " + responseEntity.getHeaders().getDate());
+
+                // return response body in Ingredient object
+                return responseEntity.getBody();
+            }
+
+        putting method:
+            burada onemli olan birsey var, request body mizin olmasi lazim. onu eklemek de cok kolay sadece gonderecegimiz object i put rest template in put mehod una parameter olarak vericez:
+
+                public void updateIngredient(Ingredient ingredient) { 
+                    rest.put("http://localhost:8080/ingredients/{id}", ingredient, ingredient.getId());
+                }
+
+            bu kadar.
+
+        post icin iki durum var, bir tanesi postForObject method u bunin return degeri create edilen object response body seinde in object halidir. ama bazen sadece created object in response yerini isimizi gorur. o zaman postForLocation method u kullanilir.
+
+            public Ingredient createIngredient(Ingredient ingredient) { 
+                return rest.postForObject("http://localhost:8080/ingredients", ingredient, Ingredient.class);
+            }
+        
+            public URI createIngredient(Ingredient ingredient) {
+                return rest.postForLocation("http://localhost:8080/ingredients", ingredient);
+            }
+
+        ikisi de yukarida.
+
+        Eger HATEOAS li bir rest api uzerinde calisiyorsan, RestTemplage o kadar yardimci olamiyor. Yerine traversion i kullanabilirsin.
+
+        traversion da sadece root url i veriyorsun. sonrasinda hateoas kullanilarak diger url lerde bilindiginden baska bir url vermene gerek kalmiyor:
+
+            Traverson traverson = new Traverson(URI.create("http://localhost:8080/api"), MediaTypes.HAL_JSON);
+
+        bu kadar. gerisi de var ama kitaptan ilerlenebilir.
