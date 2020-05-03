@@ -1,0 +1,45 @@
+taco:
+  orders:
+    pageSize: 20
+
+logging:
+  level:
+    root: ERROR
+    org.springframework.web: ERROR
+    com.rcelik: WARN
+
+---
+spring:
+  profiles: rabbit-mq
+  rabbitmq:
+    host: 127.0.0.1
+    port: 5672 # this is also optional
+    username: guest #tacoweb these are optional
+    password: guest #l3tm31n
+
+logging:
+  level:
+    root: WARN
+    org.springframework.web: DEBUG
+    com.rcelik: DEBUG
+    com.rabbitmq: DEBUG
+
+---
+spring:
+  profiles: kafka
+  kafka:
+    template:
+      default-topic: tacocloud.orders.topic
+    bootstrap-servers: localhost:9092
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      properties:
+        spring.json.add.type.headers: false
+
+logging:
+  level:
+    root: WARN
+    org.springframework.web: DEBUG
+    com.rcelik: DEBUG
+    com.rabbitmq: DEBUG

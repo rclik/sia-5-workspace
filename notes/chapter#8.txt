@@ -1,0 +1,883 @@
+Async Messaging in Spring
+    REST sync. mesajlasmanin bir ornegidir.
+    Ama Spring baska tur inter-application communication da sunar. Bu da async. mesajlasmadir.
+
+    Async mesajlasmada client response beklemez. Islemine devam eder. 
+
+    Spring de async mesajlasmak icin sunlari gorecegiz:
+        - JMS
+        - RabbitMq ve Advanced Message Queuing Protocol
+        - Kafka
+    
+    ve spring in async mesajlasmada kullandigi java object leri gorecegiz. message-driven pojo s dur bunlar (MDB message driven bean)
+
+    1. Sending Message with JMS
+        Java Messagin Service java EE nin cikardigi, uygulama ve message broker arasindaki iletisimin nasil yapilmasi gerektigini belirleyen standarttir. Benzer sekilde JDBC de ayni isi yapar. Bu ikili arasindaki ortak API yi tanimlar. Bu sekilde farkli message broker vendor lariyla daha kolay baglanti kurulabilir ve mesajlasma yapilabilir.
+
+        Spring JMS destegini ise JmsTemplate class i uzerinden verir. JDBC icin de benzer bir yaklasimla JdbcTemplate object i uzerinden veriyordu.
+
+        Ayrica Spring MDB yani mesajlasmada kullanilacak basic java object destegini de verir. Bu object lerin mesajlasmada kullanilacagi icin farkli ozelliklere sahip olmalari ve SAC tarafindan yonetilmeleri lazim. Ondan bunlara bean ismini veriyoruz.
+
+        1.2 Setting Up JMS
+            Iki broker var:
+                - Apache MQ
+                - Apache MQ Artemis
+
+            Artemis yeni cikanidir. 
+
+            Ilk olarak JMS client starter project ini eklememiz gerekir.
+            ...
+                <dependency>
+                    <groupId>org.springframework.boot</groupId>
+                    <artifactId>spring-boot-starter-activemq</artifactId>
+                </dependency>
+            ...
+
+            ayni sekilde 
+            ...
+                <dependency>
+                    <groupId>org.springframework.boot</groupId>
+                    <artifactId>spring-boot-starter-artemis</artifactId>
+                </dependency>
+            ...
+
+            bu sekilde jms client i eklmis olduk.
+
+            artemis in kendi parametreleri var:
+
+            spring:
+                artemis:
+                    host: artemis.tacocloud.com port: 61617
+                    user: tacoweb
+                    password: l3tm31n
+
+            ApacheMQ nin kendisine ait parametreleri var:
+
+            spring:
+                activemq:
+                    broker-url: tcp://activemq.tacocloud.com
+                    user: tacoweb
+                    password: l3tm31n
+                    in-memory: false
+            
+            bunlardan user ve password u optional dir. ayrica in-memory de optional dir. default degeri true dur. false olarak eklenmezde in-memory activemq yi kullanir.
+
+            biz test olarak in-memory ApacheMQ yu kullanabiliriz
+
+            bu sekilde jms message broker larin starter project lerini ekledigimizde Spring Boot starter project ine uygun en guncel version i download eder maven.
+
+    2. Sending Messages With JmsTemplate
+        Spring Boot jms client stater project ini classpath inde gorunce, verilen degerlere gore jms icin gerekli olan ayarlari ve bean leri autoconfiguration ile SAC a load eder. Sonrasinda biz de JmsTemplate bean ini kullanarak jms islemlerini yapabiliriz.
+
+        JmsTemplate diger template bean leri gibi bizim jms islmeleri yapabilmemiz icin gereken diger tum gereksiz kodlari yazmaktan bizi kurtarir. Sadece yapacagimiz ise odaklanmamizi saglar. Bu da what spring boot does dir. Onemli bilgileri de application dosyasindan alir. Bizim odaklanmamiz gereken ise mesaj gondermektir. Bunun icin bize method lar sunar. Bu method lar uc kisimdir:
+
+            // Send raw messages
+            void send(MessageCreator messageCreator) throws JmsException;
+            void send(Destination destination, MessageCreator messageCreator) throws JmsException;
+            void send(String destinationName, MessageCreator messageCreator) throws JmsException;
+
+            // Send messages converted from objects
+            void convertAndSend(Object message) throws JmsException;
+            void convertAndSend(Destination destination, Object message) throws JmsException;
+            void convertAndSend(String destinationName, Object message) throws JmsException;
+
+            // Send messages converted from objects with post-processing 
+            void convertAndSend(Object message, MessagePostProcessor postProcessor) throws JmsException;
+            void convertAndSend(Destination destination, Object message, MessagePostProcessor postProcessor) throws JmsException;
+            void convertAndSend(String destinationName, Object message, MessagePostProcessor postProcessor) throws JmsException;
+
+        Bunlari kendi iclerinde de ayirabiliriz.
+            - send method lari MessageCreator i kullanarak mesaj object i olusturur.
+            - MessagePostProcessor suz convertAndSend method u ise verilen message i convert ederek gonderir.
+            - MessagePostProcessor lu convertAndSend method u ise verilen message i gondermeden once mesaj uzerinde degisiklikler yapmak icin kullanilirlar. MessagePostProcessor de bu is icin kullanilacak code parcaciklarini bulundurur.
+
+        Bunlar ayni sekilde destination bilgilerine gore de siniflandirilabilirler. Destination bilgisi ise JMS deki queue or topic anlamina gelir. 
+            - destination bilgisi olmadan verilebilir. bu sekilde default destination a goderilir message lar.
+            - Destination object i verilerek istenilen destination a gonderilirler
+            - String destination name i verilerek istenilen destination a gonderilebilirler.
+
+        default destination property sini vermemiz gerekir:
+            spring.jms.template.default-destination: tacocloud.order.queue
+
+        bu kadar.
+
+        default destination dan farkli bir destination verebilmek icin yapmamiz gerekn sey ise bir Destination bean i olusturup, icine de destination bilgisini vermemiz:
+
+            @Bean
+            public Destination orderQueue() {
+                return new ActiveMQQueue("tacocloud.order.queue");
+            }
+
+        aslinda burada yapilan is, eger properties dosyasinda jms default destination i verirsen, onun degeri ile classpath de bulunan active mq object i olusturmak. bu property eklenmezse activemq bean i olusturulmaz. o zaman bizim code de onu olusturmamiz gerekirirdi. Ayni yukarida oldugu gibi.
+        
+        sonra istersek bu bean i message gonderegimiz service class inda inject ederiz. ve send method larind kullaniriz:
+
+            @Autowired
+            public JmsOrderMessagingService(JmsTemplate jms, Destination orderQueue) {
+                this.jms = jms;
+                this.orderQueue = orderQueue; 
+            }
+            ...
+            @Override
+            public void sendOrder(Order order) {
+                jms.send( orderQueue, session -> session.createObjectMessage(order));
+            }
+        
+        aslinda bu bean e de gerek yok. Sadece String destination degerini bilsek yeterlidir.
+            ...
+            @Override
+            public void sendOrder(Order order) {
+                jms.send( "tacocloud.order.queue", session -> session.createObjectMessage(order));
+            }
+            ...
+        bu kadar.
+
+        eger in memory activemq kullanilacaksa su parametreleri kullanmamiz gerekiyor:
+            # these values for in memory active mq client
+            spring.activemq.in-memory: true
+            spring.activemq.pool.enable=false
+        gerine gerek yok. Bu degiskenler in-memory active mq su icin gereklidir.
+
+        baglanmak icin ise jms default destination i da girmen lazim. yoksa kendi destination ini olusturman lazim.
+
+        Message in Convert Edilmesi:
+            convertAndSend method u message gonderilmeden once convert edilmesini saglar.
+            bunun icin spring in tanimladigi MessageConverter interface ini kullanip kendi converter ini yazabilirsin.
+
+            public interface MessageConverter {
+                Message toMessage(Object object, Session session) throws JMSException, MessageConversionException;
+                Object fromMessage(Message message)
+            }
+
+            ama spring in build-in message converter lari genelde isimizi gorurler. Bunlar:
+
+                - MappingJackson2MessageConverter -- Uses the Jackson 2 JSON library to convert messages to and from JSON
+                - MarshallingMessageConverter -- Uses JAXB to convert messages to and from XML
+                - MessagingMessageConverter -- Converts a Message from the messaging abstraction to and from a Message using an underlying Message- Converter for the payload and a JmsHeaderMapper to map the JMS headers to and from standard message headers
+                - SimpleMessageConverter -- Converts Strings to and from TextMessage, byte arrays to and from BytesMessage, Maps to and from MapMessage, and Serializable objects to and from ObjectMessage
+
+            bunlarin default u SimpleMessageConverter dir. O da gonderilecek object in Serializable i implement etmesini gerekli kilar.
+
+            bu gereksinimden kurtulmak icin MappingJackson2MessageConverter kullanilabilir.
+            Onu da kullanabilmek icin bir tane bean yazilir:
+
+                @Bean
+                public MappingJackson2MessageConverter messageConverter() {
+                    MappingJackson2MessageConverter messageConverter = new MappingJackson2MessageConverter();
+                    messageConverter.setTypeIdPropertyName("_typeId");
+                    return messageConverter;
+                }
+
+            bu bean oluturulurken bir tane object olusturuluyor. Sonra da setTypeIdPropertyName method u kullaniliyor. Bu cok onemli.
+            receiver uygulamasi gonderilmek istenen message i hangi type a cevirecegini anlamasi icin kullaniliyor. (dikkat hala receiver tarafdayiz). Default olarak verilen object in fully qualified class name i kullaniliyor. Ama ayni class name e sahip baska bir class da olabilir. o yuzden daha esnek bir yapi kurmamiz gerekir:
+
+                @Bean
+                public MappingJackson2MessageConverter messageConverter() {
+                    MappingJackson2MessageConverter messageConverter = new MappingJackson2MessageConverter();
+                    messageConverter.setTypeIdPropertyName("_typeId");
+
+                    Map<String, Class<?>> typeIdMappings = new HashMap<String, Class<?>>(); 
+                    typeIdMappings.put("order", Order.class);
+                    messageConverter.setTypeIdMappings(typeIdMappings);
+
+                    return messageConverter;
+                }
+
+                bu sekilde tanimlarsak, hangi object i hangi class a convert edicegini anlamis olur. buradaki _typeId ise gonderilen message in property sidir. bunu test etmek gerekir. yakalayan nasil yakaliyor diye.
+
+                bu sekilde yapildiginda classname gonderilmesi yerine, _typeId message inin icinder order key inin value su olan class gonderiliyor. Bu sekilde convert islemi daha duzgun seklide hallediliyor.
+
+            message converter in calismasini ise spring boot kendisi handle eder. message converter seklinde bir bean bulununca onu anlat ve convert islemleri icin kullanilirlar.
+
+        Message Post processing
+            soyle dusun, order mesaj i farkli iki service den atiliyor ama bir service tarafindan handle ediliyor. Handle eden taraf, receiver, gelen mesaj in hangi service den geldigini anlamasi lazim. Bu nasil olacak?
+                - ilk cevap class a bir property eklemek. bu cozum olabilir. Ama class a fazladan bir property tutmus olacaz.
+                - ikinci cevap ise, message a custom header eklemek. bu daha temiz bir cozum. cunku receiver da ona gore islem yaparak dogru class lari initiate edebilir. receiver da message in nereden geldigini anlayabilir.
+
+            guzel. simdi ikincisinin implementation ina bakalim:
+
+            mesaj olustuktan sonra bir header ekleyecez. send method unda bize message donuyor. onu return etmeden once header i ekleyebilir.
+
+                @Override
+                public void sendOrder(Order order) {
+                    jms.send( "tacocloud.order.queue", session -> {
+                        Message message = session.createObjectMessage(order);
+                        message.setStringProperty("X_ORDER_SOURCE", "WEB");
+
+                        return message;
+                    });
+                }
+
+            send message ina setStringProperty method u ile, bir costum header eklemis olduk.
+
+            bir de convertAndSend methoduyla bu islemi yapalim. Burada bir sorun var. convertAndSend method u void. Onun icin biz direk olarak message object ine ulasamiyoruz. Onun icin de MessagePostProcessor interface i var. Onun object ini kullanabiliriz.
+
+                jms.convertAndSend(
+                    "tacocloud.order.queue", 
+                    order, 
+                    new MessagePostProcessor() {
+                        @Override
+                        public Message postProcessMessage(Message message) throws JMSException {
+                            message.setStringProperty("X_ORDER_SOURCE", "WEB");
+                            return message; 
+                        }
+                    }
+                );
+            
+            ayni islem yapilmis oldu.
+
+
+            bu islemi her bir message icin kullanabilirsin. Onun icin method reference i kullanmak daha iyi bir uygulama olacaktir:
+
+            ...
+                jms.convertAndSend(
+                    "tacocloud.order.queue", 
+                    order, 
+                    this::addOrderSource
+                );
+            ...
+
+            private void addOrderSource(Message message) throws JmsException {
+                message.setStringProperty("X_ORDER_SOURCE", "WEB");
+                return message;
+            }
+
+            bu kadar.
+
+    3. Receving Messages
+        burada iki tane model den bahsedebiliriz.
+            pull model: yani request i atiyorsun, gelmesini bekliyorsun (message listener) 
+            push model: code unun mesaj atildiktan sonra mesajinda handle edilmesine gore kuruyorsun.
+
+        JmsTemplate pull model kullaniliyor. Bu islemleri yapabilmek icin ise method lar sunuyor. 
+        bu method lardan birini kullaninca method call yapan thread block laniyor ve o message in gelmesiyle isleme koyuluyor.
+
+        genelde push model en iyi secenektir. cunku thread block lamaz. ama mesajlarin cok geldigi yerde pull model daha verimli olacaktir. cunku pull model da receiver bir sonraki mesaji icin ready oldugunu soyler.
+
+        ikisini de ele alalim:
+
+        3.1. Jms Template (pull model)
+            JmsTemplate bunlar gibi bircok method sunar:
+                Message receive() throws JmsException;
+                Message receive(Destination destination) throws JmsException;
+                Message receive(String destinationName) throws JmsException;
+                Object receiveAndConvert() throws JmsException;
+                Object receiveAndConvert(Destination destination) throws JmsException;
+                Object receiveAndConvert(String destinationName) throws JmsException;
+            
+            bunlar send ederken gonderilen method larin aynalaridir.
+
+            ilk olarak receive method undan, baslayalim. burada mesage raw content tedir. yani elle class cast edebiliriz.
+
+            ilk olarak yeni bir project olusturman lazim. bu project icinde activemq yu kullandigimiz icin onun dependency sini eklemek gerekiyor.
+
+            basitce order receiver bu sekilde olabilir. bu class component annotation i ile yazilir bu sekilde SAC onun bir bean oldugunu anlar ve load eder.
+            icine bir JmsTemplate ve message converter object i alir. Bunu da sac in inject edilir. sonra jms den receive edersin. sonra convert edersin.
+
+                @Component
+                public class JmsOrderReceiver implements OrderReceiver {
+                    private JmsTemplate jms;
+                    private MessageConverter converter;
+                    
+                    @Autowired
+                    public JmsOrderReceiver(JmsTemplate jms, MessageConverter converter) {
+                        this.jms = jms;
+                        this.converter = converter; 
+                    }
+
+                    public Order receiveOrder() {
+                        Message message = jms.receive("tacocloud.order.queue"); 
+                        return (Order) converter.fromMessage(message);
+                    }
+                }
+            
+            bu arada converter i inject etmek yerine receiveAndConvert method unu kullanabilirsin. Method su sekilde degisir sadece:
+                public Order receiveOrder() {
+                    return (Order) jms.receiveAndConvert("tacocloud.order.queue");
+                }
+
+        3.2. Push Modeli
+            listener ekleyerek bunu yapabiilrsin.
+
+                @Component
+                public class OrderListener {
+                    private KitchenUI ui;
+
+                    @Autowired
+                    public OrderListener(KitchenUI ui) {
+                        this.ui = ui; 
+                    }
+                    
+                    @JmsListener(destination = "tacocloud.order.queue") 
+                    public void receiveOrder(Order order) {
+                        ui.displayOrder(order); 
+                    }
+                }
+            
+            bu en iyi cozum olarak gorulebilir. cunku thread block lamaz. spring jms e gelen message i direk listener method unu cagirarak load eder. 
+            ama bu her zaman iyi degildir. cunku order alindiktan sonra order i islemek de bir problemdir. eger alinan order in islenmesi bittikten sonra yeni bir order alinmasini istersek o zaman pull model i kullanmamiz lazim gelir.
+
+        AMQP ile RabbitMq implementation i yapmak
+            AMQP implementation i olan RabbitMq JMS den daha gelismis bir message-routing strategy sunar.
+
+            RabbitMq da:
+                sender message ini RabbitMq broker daki bir exchange e gonderir. (exchange)
+                bu exchange tipine ve verilen bilgilerine gore bunu queue lara veya queue ya iletir. (bu isleme binding denir)
+                bu queuelari dinleyen receiver lar da message lari alirlar.
+
+                amqp de message larin iletilecegi address exchange type ve message-routing key iyle belirlenir. receiver ise sadece queue yu bilir. bu sekilde receiver ve sender arasinda bir iliski kalmaz. sadece message broker i bilirler. (receiver ve sender in decoupled olmasi durumu denir) 
+
+
+                          ______________________________________ 
+                          |              | -> binding -> queue |   --> receiver
+                sender -> | exchange ->  |                     |  
+                          |              | -> binding -> queue |   --> receiver
+                          --------------------------------------
+
+                o zaman bu resimde routing key, exchange de var. 
+                binding key ise exchange den gelen message in hangi queue ya iletilecegi bilgiyi tutar. soyle dusunebiliriz. bir routing key icin birden fazla binding key olabilir. cunku bir message birden fazla queue ya eklenebilir.
+
+            exchange tipleri sunlardir:
+                - default : hicbirsey kullanilmamissa bu kullanilir. 
+                            message routing key ile ayni isimdeki queue ya message lari gonderir. (binding key ile ugrasmaz)
+                - direct: message lari binding key ile routing key ayni olan queue lara gonderir.
+                - topic: gelen mesaji routing key i ile binding key match eden tum queue lara gonderir.
+                - Fanout: gelen mesaji active olan tum queue lara gonderir. bunda message routing ve biding key meselesi yoktur.
+                - headers: topic ile aynidir. ama binding key message header i ile eslestirilip ona gore queue lara aktarilir. burada farkli olan message routing key yerine header larin kullanilmasidir.
+                - dead letter: queue lara deliver edilmeyen tum message lar buraya gelir. bunlar ise binding key- routing key match etmeyen mesajlar diyebiliriz.
+
+            RabbitMq u kullanmak icin spring in amqp starter dependency sini eklememiz lazim.
+                <dependency> 
+                    <groupId>org.springframework.boot</groupId>
+                    <artifactId>spring-boot-starter-amqp</artifactId>
+                </dependency>
+
+            bu starter project i ile RabbitMq yu kullanabilirsin.
+
+            su property lerle ise RabbitMq yi configure edebilirsin.
+                spring.rabbitmq.addresses -- comma separeted rabbitmq broker addresses
+                spring.rabbitmq.host (default localhost)
+                spring.rabbitmq.port (default 5672)
+                spring.rabbitmq.username (optional)
+                spring.rabbitmq.password (optional)
+
+            spring:
+                profiles: prod
+                rabbitmq:
+                    host: rabbit.tacocloud.com 
+                    port: 5673
+                    username: tacoweb 
+                    password: l3tm31n
+
+            bu sekilde profile a gore rabbitmq ayarlarini yapabilirsin.
+
+            Mesaj Gonderilmesi
+                JmsTemplate gibi RabbitTemplate i kullaniyoruz. (RabbitTemplate is an implementation of AmqpTemplate)
+                template method lari ise JmsTemplate ile benzer. method name leri benzer ama string parametre isimleri farkli; burada destination yerine message routing key kullaniliyor.
+
+                    // Send raw messages
+                    void send(Message message) throws AmqpException;
+                    void send(String routingKey, Message message) throws AmqpException;
+                    void send(String exchange, String routingKey, Message message) throws AmqpException;
+
+                    // Send messages converted from objects
+                    void convertAndSend(Object message) throws AmqpException;
+                    void convertAndSend(String routingKey, Object message) throws AmqpException;
+                    void convertAndSend(String exchange, String routingKey, Object message) throws AmqpException;
+
+                    // Send messages converted from objects with post-processing 
+                    void convertAndSend(Object message, MessagePostProcessor mPP) throws AmqpException;
+                    void convertAndSend(String routingKey, Object message, MessagePostProcessor messagePostProcessor) throws AmqpException;
+                    void convertAndSend(String exchange, String routingKey, Object message, MessagePostProcessor messagePostProcessor) throws AmqpException;
+
+                implementation inda rabbitmq icin yazacagimiz kodlar icin activemq degisiklikleri geri aldim. cunku cakisma olmamasi icin. MessageConverter object leri RabbitMq da yok. Onun icin class object leri bulunamadi dedi. 
+
+                implementation:
+
+                @Service
+                @Slf4j
+                public class RabbitMqMessagingService implements OrderMessagingService {
+
+                    private final static String ROUTING_KEY = "tacocloud.order";
+                    private final RabbitTemplate rabbitTemplate;
+
+                    @Autowired
+                    public RabbitMqMessagingService(RabbitTemplate rabbitTemplate) {
+                        log.debug("[RabbitMqMessagingService] service bean is created");
+                        this.rabbitTemplate = rabbitTemplate;
+                    }
+
+                    @Override
+                    public void sendOrder(Order order) {
+                        log.debug("[sendOrder] order: {}", order);
+                        // to convert message get the converter, it is used to make Order to Message
+                        MessageConverter messageConverter = rabbitTemplate.getMessageConverter();
+
+                        // if you want to add property to add message, use MessageProperties class, take it amqp library
+                        MessageProperties messageProperties = new MessageProperties();
+
+                        // create message object with actual object and messageProperties
+                        Message message = messageConverter.toMessage(order, messageProperties);
+
+                        // send message to message broker with the routing key, default exchange is used
+                        rabbitTemplate.send(ROUTING_KEY, message);
+                    }
+                }
+
+                bir service oldugunu soyledik, logger ini da ekledik.
+                bir tane RabbitTemplate Autowire ettik bu message islemleri icin kullanilacak.
+                send etmeden once RabbitTemplate den messageConverter i aldik. 
+                message a property eklmek icin amqp den aldigimiz MessageProperties class i instance i olusturduk. message icinde birseyler eklemek istersek, bu object e ekleyecegiz.
+                sonrasinda ise convertor u kullanarak messageProperties ve gonderecegimiz object leri kullanarak message object i olusturduk.
+                sonra JmsTemplate ile message i routing key e send ettik.
+
+                burada exchange ismi berlirtmedigimzden bu default exchange type olur. spring default exchange e yonderirir. default exchange name i "" dir. bu kullanilir. bunu override etmek icin application properties e property ekleyebiliriz:
+
+                    spring:
+                    rabbitmq:
+                        template:
+                            exchange: tacocloud.orders 
+                            routing-key: kitchens.central
+
+                bu sekilde default exchange ismi ve routing key i verilmis olur. yani direk olarak send method unu kullanabiliriz.
+                ya da hicbir message properties eklemezsek direk convertAndSend method unu da kullanabiliriz.
+
+                ...
+                public void sendOrder(Order order){
+                    rabbitTemplate.convertAndSend(order);
+                }
+            
+            Message Converter islemleri
+                message converter i tanimlamazsak SimpleMessageConverter kullanilir.
+                ama bu basit type lari String gibi ve Serializable i implement eden object leri convert edebilir.
+
+                ama spring bizim icin message converter lari sunar:
+
+                 Jackson2JsonMessageConverter—Converts objects to and from JSON using the Jackson 2 JSON processor
+                 MarshallingMessageConverter—Converts using a Spring Marshaller and Unmarshaller
+                 SerializerMessageConverter—Converts String and native objects of any kind using Spring’s Serializer and Deserializer abstractions
+                 SimpleMessageConverter—Converts String, byte arrays, and Serializable types
+                 ContentTypeDelegatingMessageConverter—Delegates to another Message-
+                Converter based on the contentType header
+                 MessagingMessageConverter—Delegates to an underlying MessageConverter
+                for the message conversion and to an AmqpHeaderConverter for the headers
+
+                bunlardan birini kullabiilriz.
+
+                    @Bean
+                    public MessageConverter messageConverter() {
+                    return new Jackson2JsonMessageConverter();
+                    }
+
+                bunu ekleyince spring boot autoconfiguration bunu bulur ve rabbitmq ya default message converter olarak ekler.
+
+                rabbitmq connection ini kurabilmek icin degisiklikler gerekti
+
+                spring:
+                    profiles: rabbit-mq
+                    rabbitmq:
+                        host: 127.0.0.1
+                        port: 5672 # this is also optional
+                        username: guest #tacoweb these are optional
+                        password: guest #l3tm31n
+
+                burada onemli olan port ve host property leri. bunlari rabbitmq dan listener kismindan aldik.
+                overview kismindan ports and contexts kismini aldik.
+
+            Message a Property Ekleme
+                Daha once JMS de yaptigimiz gibi gonderecegimiz message a property ekleyebiliriz.
+                ekleme yapmak icin ayni yontemleri kullanabiliriz.
+
+                bu islemi hem send method u icin hem de convertAndSend method u icin ayri ayri yapabiliriz.
+
+                send method u icin:
+                    sadece MessageProperties object ine property ekleyecez o kadar.
+
+                    @Override
+                    public void sendOrder(Order order) {
+                        log.debug("[sendOrder] order: {}", order);
+                        // to convert message get the converter, it is used to make Order to Message
+                        MessageConverter messageConverter = rabbitTemplate.getMessageConverter();
+
+                        // if you want to add property to add message, use MessageProperties class, take it amqp library
+                        MessageProperties messageProperties = new MessageProperties();
+                        messageProperties.setHeader(HEADER_ORDER_SOURCE, HEADER_ORDER_WEB);
+
+
+                        // create message object with actual object and messageProperties
+                        Message message = messageConverter.toMessage(order, messageProperties);
+
+                        // send message to message broker with the routing key, default exchange is used
+                        rabbitTemplate.send(ROUTING_KEY, message);
+                    }
+
+            Receiving From RabbitMq
+                Receive islemleri JMS de oldugu gibi pull ve push model leri kullaniliyor.
+                bunun icin sirasiyle RabbitTemplate ve @RabbitListener annotation i kullanilir.
+
+                RabbitTemplate ile Pull Model
+                    RabbitTemplate birden fazla method saglar:
+
+                    // Receive messages
+                    Message receive() throws AmqpException;
+                    Message receive(String queueName) throws AmqpException;
+                    Message receive(long timeoutMillis) throws AmqpException;
+                    Message receive(String queueName, long timeoutMillis) throws AmqpException;
+
+                    // Receive objects converted from messages
+                    Object receiveAndConvert() throws AmqpException;
+                    Object receiveAndConvert(String queueName) throws AmqpException;
+                    Object receiveAndConvert(long timeoutMillis) throws AmqpException;
+                    Object receiveAndConvert(String queueName, long timeoutMillis) throws AmqpException;
+
+                    // Receive type-safe objects converted from messages
+                    <T> T receiveAndConvert(ParameterizedTypeReference<T> type) throws AmqpException;
+                    <T> T receiveAndConvert(String queueName, ParameterizedTypeReference<T> type) throws AmqpException;
+                    <T> T receiveAndConvert(long timeoutMillis, ParameterizedTypeReference<T> type) throws AmqpException;
+                    <T> T receiveAndConvert(String queueName, long timeoutMillis, ParameterizedTypeReference<T> type) throws AmqpException;
+
+                sender exchange ve routing key bilirken receiver sadece queue yu bilir. bu sekilde receiver ve sender birbirinden tam olarak decoupled olur.
+
+                burada jms den farkli olarak long timeout degeri var. bu ise receive icin bir request atinca o zaman icinde eger cevap atilmazsa response olarak null deger donulur. bu yuzden kodunun null a gore yazilmasi gerekir. eger bu timeout degerini vermezsen default degeri 0 dur.
+
+            Implementation i yaparken onemli olan rabbit mq uzerinde queue acmaktir. onu create ettikten sonra sender in send ettigini receiver get edebiliuyor.
+
+            Sender in gonderdigi object i receiver in convert edememesi problemi ile karsilastik. receiver conver ederken sender in gonderdigi class a cast etmeye calisiyordu, bu yuzden cast edemiyordu. cunku server daki class receiver da yoktu. 
+            cozum olarak, server send ederken Jackson2JsonMessageConverter a classMapper tanimladik. Bu classMapper key-value seklinde pair lerden olusuyor. key de class name ini tutan bir string, value sunda ise hangi class i tuttugu class object i alir.
+            bu sekilde server gonderirken kendi class mapper ini ekler. receiver da kendi class mapper ini ekler. onemli olan nokta ise receiver in server in hangi class name ini kullanarak message attigini bilmesidir. bu sekilde kendisi dogru class a map edilmesini, yani cast edilmesini saglar.
+
+            sender ve receiver converter config leri bu sekilde olmalidir. ikisi de ayni, yalniz mapper da kullandiklari Order object i ikisinde de farkli class tanimlamalaridir.
+
+                    @Bean
+                    public Jackson2JsonMessageConverter jsonMessageConverter() {
+                        log.debug("[jsonMessageConverter] converter object is created");
+                        Jackson2JsonMessageConverter converter = new Jackson2JsonMessageConverter();
+                        converter.setClassMapper(classMapper());
+                        return converter;
+                    }
+
+                    @Bean
+                    public DefaultClassMapper classMapper() {
+                        DefaultClassMapper classMapper = new DefaultClassMapper();
+                        Map<String, Class<?>> idClassMapping = new HashMap<>();
+                        idClassMapping.put("order", Order.class); // this order should be known by receiver 
+                        classMapper.setIdClassMapping(idClassMapping);
+                        return classMapper;
+                    }
+
+            eger Jackson2JsonMessageConverter kullanmiyorsan gelen object in convert islemleri icin baska bir yaklasim var: ParameterizedTypeReference ile cast etmek. diger message conveter larda bunu kullanbilirsin. bu sekilde class mapper a gerek kalmaz.
+
+                public Order receiveOrder() {
+                    return rabbit.receiveAndConvert("tacocloud.order.queue",  new ParameterizedTypeReference<Order>() {});
+                }
+
+            bir de dikkat edilmesi gerekn bir nokta daha var. receiver kismindaki domain class larinin (Order ve kullandigi alt class lar) argumentsiz constructor inin tanimlanmis olmasi. cunku onu kullanarak converter object i instantiate ediyor.
+            
+                
+            receive timeout degeri default olarak atanabiliir. bunu da properties dosyasinda yapabiliriz:
+                spring:
+                    rabbitmq:
+                        template:
+                            receive-timeout: 30000
+            bu sekilde timeout degeri verilmeyen receive method larimizin default timeout degeri olmus olur.
+
+            Push model ile gelen message i receive etmek.
+            islem olarak pull model e gore daha kolay. 
+            sadece yapmamiz gereken bir listener compoment i yazmak ve onun kullanilmasini saglamak.
+            simdlik gelen order i sadece gelen order i log a basalim. onu yapabilmek icin bir component yaziyoruz.
+
+                @Profile("rabbitmqlistener")
+                @Slf4j
+                @Component
+                public class OrderListener {
+
+                    @RabbitListener(queues = {"tacocloud.orders"})
+                    public void receiveOrder(Order order) {
+                        log.debug("[receiveOrder] order: {}", order);
+                    }
+                }
+
+            bu kadar. onemli olan birsey daha var. converter imiz yazmak. onun icin de eski method converter config class imizi kullanabiliriz. sadece profile i kullanarak islem yapabiliriz. hatta controller class ini da o profile a baglayabiliriz cunku listener profile inda order service inin bir instance i olusmayacak. profile lari kullanarak object yaratilmasi temizlenmesi cok daha kolay ve verilmli oluyor.
+
+            buraya kadar olan islerin ui ve diger converter tipleriyle orneklendirmesini yap.
+
+
+    Kafka Uygulamasi.
+        kafka nin okunmasi lazim. genel olarak o da bir message broker ama daha scalable rabbitmq ya gore. 
+        rabbitmq da exchange ve queue lar var. ama kafka da topic ler var ve producer publish eder ve consumer bunlara subscribe olurlar.
+
+        digeleride oldugu gibi buna da ilk olarak pom a starter project ini ekliyoruz.
+
+            <dependency> 
+                <groupId>org.springframework.kafka</groupId>
+                <artifactId>spring-kafka</artifactId>
+            </dependency>
+
+        bu sekilde kullandigimiz spring boot application ina gore uygun kafka starter project i getirilmis oldu.
+        spring autoconfiguration da bu starter i gorunce ayaga kaldirmasi gereken bean leri context ine load eder. 
+        digerlerinde oldugu gibi KafkaTemplate bean ini olusturur. Ve biz de onu kullanabiliriz.
+
+        default olarak kafka nin host u localhost dur ve port u 9092 dir.
+        bunlari degistirebilirsin ayni rabbitmq da ve activemq da oldugu gibi.
+
+            spring:
+                kafka:
+                    bootstrap-servers:
+                    - kafka.tacocloud.com:9092
+
+        burada ilk olarak gozume takilan kafka ya birden fazla server verebilmemiz. yani cluster olarak kafka calisabiliyor. onu simdilik birakalim. localhost da kullanabiliriz.
+        
+        Sending Message
+            send isleminde genel olarak bakilinca jms ve rabbitmq ya benziyor ama farkli yaklasimlari var:
+
+                ListenableFuture<SendResult<K, V>> send(String topic, V data);
+                ListenableFuture<SendResult<K, V>> send(String topic, K key, V data);
+                ListenableFuture<SendResult<K, V>> send(String topic, Integer partition, K key, V data);
+                ListenableFuture<SendResult<K, V>> send(String topic, Integer partition, Long timestamp, K key, V data);
+                ListenableFuture<SendResult<K, V>> send(ProducerRecord<K, V> record);
+                ListenableFuture<SendResult<K, V>> send(Message<?> message);
+
+                ListenableFuture<SendResult<K, V>> sendDefault(V data);
+                ListenableFuture<SendResult<K, V>> sendDefault(K key, V data);
+                ListenableFuture<SendResult<K, V>> sendDefault(Integer partition, K key, V data);
+                ListenableFuture<SendResult<K, V>> sendDefault(Integer partition, Long timestamp, K key, V data);
+
+            burada partition, topic ve timestamp goruyoruz. bunlar kafkanin calisma mantiginda kullandigi terimler. 
+            convertAndSend method u yok cunku kafka generics lerle calisiyor. onun icin converter a gerek yok. bunlarin yerine send ve sendDefault method lari var. sanirim biri default degerleri kullanirken digeri customized method olarak kullaniliyorlar.
+
+            su parametrelere gore kafka message larini send edebilirsin.
+                - topic --> sender icin gereklidir. hangi topic e yazilacagini belirtmek icin.
+                - partition --> optional dir. topic in hangi partition ina yazilacagini berlitmek icin.
+                - key --> optional dir. hangi record a yazilacagini belirtmek icin.
+                - timestamp --> optional dir. millisecond olarak yazilir.
+                - payload --> hepsi icin gereklidir.
+
+            Sending Kafka message:
+                starter project i pom a ekledikten sonra tek yapacagimiz sey digerlerinde oldugu gibi bir serivce class i yazmak. buna bir profile verip o sekilde yaratilmasini saglayabiliriz.
+
+            ilk olarak properties e bakalim:
+
+            ---
+            spring:
+                profiles: kafka
+                kafka:
+                    template:
+                    default-topic: tacocloud.orders.topic
+                    bootstrap-servers:
+                    - localhost:9092
+
+            logging:
+            level:
+                root: WARN
+                org.springframework.web: DEBUG
+                com.rcelik: DEBUG
+                com.rabbitmq: DEBUG
+
+            burada kafka nin default queue sunu vermis olduk. ayrica server host ve port unu vermis olduk.
+
+            send islemi bittikten sonra ListenableFuture ile neler yapilabilir bak. sonra bunu rabbitmq da bir karsiligi var mi diye bak.
+
+            bir sorunumuz var. eger apache kafka ya producer connect olmazsa arka planda connect olmaya calisan bir mekanizmasi var. bir timeour suresinden sonra sie send edemezse islemine devam ediyor ama o arka plan da atmaya calisiyor.
+            bu bekleme zamani ise 1 dakika. 
+                org.apache.kafka.common.errors.TimeoutException: Topic tacocloud_orders_topic not present in metadata after 60000 ms.
+
+
+        Kafka Sender uygulamasi
+            Ilk olarak bir config class i olusturabilirlz ya da bu config class la ayni isi yapmasi icin application file ini doldururuz,
+
+            application.yml i doldurarak yapalim:
+            ...
+                spring:
+                    profiles: kafka
+                    kafka:
+                        template:
+                            default-topic: tacocloud.orders.topic
+                        bootstrap-servers: localhost:9092
+                        producer:
+                            key-serializer: org.apache.kafka.common.serialization.StringSerializer
+                            value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+                            properties:
+                                spring.json.add.type.headers: false
+            ...
+
+            profile a gore application file imizi dolduruyoruz. profile optional.
+            
+            sonra bu kafka altinda default topic i verdik, bu eger message i send ederken bir topic verilmezse kullanilcak olan topic dir.
+            bootstrap-servers uygulamanin baglanacagi kafka server lar icin verilir.
+
+            producer.key-serializer producer tarafindan gonderilecek message in key ini serialize etme yontemini belirler.
+            producer.value-serializer producer tarafinfan gonderilecek message in value sunu serialize etme yontemini belirler.
+
+            burada onemli olan bir parametre daha var. spring.kafka.producer.properties.spring.json.add.type.headers parametresi.
+            bu parametre type header i yani send edilen message in bilgilerini (nasil deserialize edilir gibi) tutar. default degeri true dur. eger true ise type header inin doldurulmasi gerekir. yoksa message send edilirken hata verir. (Magic version 1 hatasi)
+
+            bu ayarlarin kod kisminda eklenmesi:
+
+                @Profile("kafka")
+                @Slf4j
+                @Configuration
+                public class KafkaMessagingConfig {
+
+                    @Value("${spring.kafka.bootstrap-servers}")
+                    private String bootstrapServers;
+
+                    @Bean
+                    public KafkaTemplate kafkaTemplate() {
+                        return new KafkaTemplate<>(kafkaProducerFactory());
+                    }
+
+                    @Bean
+                    public ProducerFactory kafkaProducerFactory() {
+                        log.debug("[kafkaProducerFactory] kafka bootstrap servers : {}", bootstrapServers);
+
+                        Map<String, Object> config = new HashMap<>();
+                        config.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
+
+                        config.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
+                        config.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, JsonSerializer.class);
+
+                        // it is important since kafka needs message type info headers, then need to set it false
+                        config.put(JsonSerializer.ADD_TYPE_INFO_HEADERS, false);
+
+                        return new DefaultKafkaProducerFactory(config);
+                    }
+
+                }
+
+            mantik su, bir tane ayarlarin bulunacagi DefaultKafkaProducerFactory object i olusturuyoruz. Bu object e ise ayarlarin bulunacagi map object i veriyoruz.
+            sonra bu object i ise olusturacagimiz KafkaTemplate bean ine veriyoruz. 
+
+
+
+
+
+            kafka message larinda key-value sekildinde tutulurlar. 
+            key genel de bir uuid dir. value ise bir object dir.
+
+            send yapan class da message key ini vermeden sadece topic e message send ediyoruz.
+
+                @Slf4j
+                @Profile("kafka")
+                @Service
+                public class KafkaMessagingService implements OrderMessagingService {
+
+                    private final static String TOPIC_NAME = "tacocloud_orders_topic";
+                    private final KafkaTemplate<String, Order> kafkaTemplate;
+
+                    @Autowired
+                    public KafkaMessagingService(KafkaTemplate<String, Order> kafkaTemplate) {
+                        log.debug("[KafkaMessagingService] bean is created");
+                        this.kafkaTemplate = kafkaTemplate;
+                    }
+
+                    @Override
+                    public void sendOrder(Order order) {
+                        log.debug("[sendOrder] order: {}", order);
+                        kafkaTemplate.send(TOPIC_NAME, order);
+                    }
+
+                    // to send the order to default topic then use sendDefault method but do not forget to add default topic to the
+                    // properties file
+                    private void sendOrderToDefaultTopic(Order order) {
+                        kafkaTemplate.sendDefault(order);
+                    }
+                } 
+
+            burada key siz bir JsonSerializer ile serialize edilmis Order message i oradaki topic e atiyoruz. application file inda bulunan kafka instance ina atiyoruz.
+
+            bu sekilde message send edilmis oldu. 
+
+        Consumer Kismi
+            Yukarida send edilmis message i consume edecek application i yazalim.
+            Bu application da bilmemiz gereken;
+                - producer in send message i ettigi kafka server ip:port
+                - topic, group id varsa group id (ama yok)
+                - gonderilen message key ve value deserializer yontemleri
+                - gonderilen message in header type tipi, yani hangi message in hangi class ile deserialize edilecegi bilgisi
+                    bu kisimda producer type header i yok onun icin consumer default type i kullanarak gelen message i ona convert edicek.
+
+            bunlari application file inda verelim:
+
+                spring.kafka.template.default-topic=tacocloud.orders.topic
+                spring.kafka.bootstrap-servers=localhost:9092
+                spring.kafka.consumer.key-deserializer=org.apache.kafka.common.serialization.StringDeserializer
+                spring.kafka.consumer.value-deserializer=org.springframework.kafka.support.serializer.JsonDeserializer
+                spring.kafka.consumer.properties.spring.json.value.default.type=com.rcelik.sia.chaptereight.taccloudkitchen.domain.Order
+
+                spring.kafka.consumer.group-id=json
+
+            group-id yi verdik ama olmasa hata veriyordu. ama calismasinda sorun yasamiyoruz.
+            spring.kafka.consumer.properties.spring.json.value.default.type parametresi ise gelen message i default olarak deserialize etmek icin kullanilir. yoksa gelen message deserialize edilmez hata verir.
+
+            Consumer code u ise push mantigidir. yani bir thread gelen message i bekler ve islem yapar.
+            ...
+                @Profile("kafka")
+                @Slf4j
+                @Component("kafkaOrderListener")
+                public class KafkaOrderListener {
+
+                    @KafkaListener(topics = "tacocloud_orders_topic")
+                    public void handleReceivedOrder(Order order) {
+                        log.debug("[handleReceivedOrder] order: {}", order);
+                    }
+                }
+            ...
+
+            thats it. 
+
+            yukaridaki message ayarlarinin kod ile yapilmasi:
+
+            
+                @Configuration
+                @Profile("kafka")
+                @Slf4j
+                public class KafkaMessagingConfig {
+                    @Value("${spring.kafka.bootstrap-servers}")
+                    private String bootstrapServers;
+
+                    @Value("spring.kafka.consumer.group-id")
+                    private String groupId;
+
+                    @Bean
+                    public ConcurrentKafkaListenerContainerFactory<String, Order> kafkaListenerContainerFactory() {
+                        ConcurrentKafkaListenerContainerFactory<String, Order> factory =
+                                new ConcurrentKafkaListenerContainerFactory<>();
+
+                        factory.setConsumerFactory(consumerFactory());
+
+                        return factory;
+                    }
+
+                    @Bean
+                    public ConsumerFactory<String, Order> consumerFactory() {
+                        Map<String, Object> props = new HashMap<>();
+                        props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
+                        props.put(ConsumerConfig.GROUP_ID_CONFIG, groupId);
+
+                        props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
+                        props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, JsonDeserializer.class);
+                        // this is used for converting coming object to Order class
+                        props.put(JsonDeserializer.VALUE_DEFAULT_TYPE, Order.class);
+                        
+                        return new DefaultKafkaConsumerFactory<>(props);
+                    }
+
+                }
+
+            consumer kisminda producer a benzer bir yapi var ama consumer tarafinda KafkaTemplate kullanmadigimizdan onun yerine ConcurrentKafkaListenerContainerFactory i kullaniyoruz.
+            diger kisimlar da benzerlik var. 
+
+            burada bir message type i dinlememiz soz konusu. ConcurrentKafkaListenerContainerFactory key value su String ve Order tipindedir. Yani sadece bunlari doner. Ayrica application file da da soyledigimiz gibi default value type i ekledik. O da sadece Order message inin donecegini soylemis olduk.
+
+
+
+
+
+
+
+
+
+
+
+
+

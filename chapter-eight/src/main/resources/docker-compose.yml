@@ -1,0 +1,21 @@
+version: '3.1'
+services:
+  rc-kafka: # container name
+    image: spotify/kafka # docker image name, spotify kafka image will be used
+    ports:
+      - "2181:2181" # exposing ZooKeeper port
+      - "9092:9092" # exposing kafka port
+    hostname: localhost # docker container hostname
+    container_name: kafka # docker container
+    environment: # setting environment variables for the container
+      - "ADVERTISED_HOST=localhost" # host name will be used for the container, should be same as hostname above
+      - "ADVERTISED_PORT=9092" # port will be used for kafka
+      - "AUTO_CREATE_TOPICS=true" # kafka configuration that enables creating topics whether it is not available
+    command: > # command to be run after container is up, create topic with name rc-topic inside zookeeper
+      bash -c
+      "(sleep 15s &&
+      /opt/kafka_2.11-0.10.1.0/bin/kafka-topics.sh
+      --create
+      --zookeeper
+      localhost:2181 --replication-factor 1 --partitions 1
+      --topic rc-topic &) && (supervisord -n)"
