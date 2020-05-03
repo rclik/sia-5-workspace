@@ -1,0 +1,280 @@
+Configuration Properties:
+    Configuration property leri SAC uzerindeki bean lerin kullandiklari property lerdir. Bu property lerin farkli kaynaklar tarafindan eklenebilirler. Spring ise bu kaynaklari toplayarak bean lere inject eder.
+
+    iki cesit configuration var:
+        - bean wiring: sac  a tanimlanan bean lerin icindeki autowire ile eklenmis bean lere configuration denir.
+        - property inject: bu da bean lere property leri sac uzerinden gecilmesi.
+
+    ornek olarak:
+
+    @Bean
+    public DataSource dataSource() {
+        return new EmbeddedDataSourceBuilder().setType(H2).addScript("taco_schema.sql") .addScripts("user_data.sql", "ingredient_data.sql") .build();
+    }
+
+    sping ile bu sekilde bir bean olusurabilirsin. bu bean de H2 icin dataSource olusturur. Ve icine db table larini ve datafill lerini yapacagin script leri verebilirsin. Ama spring autoconfiguration h2 yu classpath inde gorunce otomatik olarak kendsi script lerini ekler. Ne zaman yeni dataSource eklenmesi gerektigine ise property ler ile karar verebilirsin.
+
+
+    Property kaynaklari:
+        JVM system Properties
+        OS environment variables
+        Command-line arguments
+        Application property configuration files
+
+    SAC bunlari ortak olarak toplar, ve bean lerin kullanmasini saglar.
+
+    /src/main/resources dizini altinda application.properties file icinde property lerimizi tanimlayabiliriz. ya da application.yml dosyasi da olabilir. yaml daha kolay anlasilir bir yapisi vardir. ornegin:
+
+        properties file inda
+            server.port=9090
+
+        yaml file inda
+            server:
+                port: 9090
+
+        command-line argument olarak:
+            java -jar tacocloud-0.0.5-SNAPSHOT.jar --server.port=9090
+
+        environment variable olarak:
+            export SERVER_PORT=9090
+
+        
+
+    application.yaml i kullanarak h2 ya data source larini verebiliriz:
+
+        spring:
+        datasource:
+            schema:
+            - order-schema.sql
+            - ingredient-schema.sql - taco-schema.sql
+            - user-schema.sql
+            data:
+            - ingredients.sql
+
+    bu sekilde configure edebilebilir.
+
+    ya da ayni isi yapmak icin JNDI kullabilirsin:
+        spring:
+            datasource:
+                jndi-name: java:/comp/env/jdbc/tacoCloudDS
+
+    Configuring Embedded Server:
+        application.yaml da degisiklik yapabilirsin:
+
+        server:
+            port: 0
+
+        port un 0 olmasi, random olarak atanacagini soylemektir. Bunun duruma gore kullanimlari vardir.
+            - micro service lerde
+            - test leri calistirirken, yokso kullanilan port u verebiliriz. bu da probleme neden olur.
+
+        httpa islemleri icin:
+
+        server:
+            port: 8443
+            ssl:
+                key-store: file:///path/to/mykeys.jks 
+                key-store-password: letmein 
+                key-password: letmein
+
+    Configuring Logging:
+        bazi thrid party uygulamalar, siz kullanmasaniz bile log lama kullanirlar. Ama siz onlari kullandiginiz icin dolayli olarak log lamayi kullanmis olursunuz.
+        Spring ise default olarak INFO level inde Logback i kullanir. Bunu configure edebilirisin. Onun root of context path (/src/main/resources) altina logback.xml file i olusturabilirsin. SAC ayaga kalkarken otomatik olarak oraya bakacak ve kendisinin kullandigi property ler yerine file daki configuration lari kullanacak:
+
+        <configuration>
+            <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+                <encoder>
+                    <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n </pattern>
+                </encoder>
+            </appender>
+            <logger name="root" level="INFO"/>
+            <root level="INFO">
+                <appender-ref ref="STDOUT" />
+            </root>
+        </configuration>
+
+        loggin level lerini degistirmek icin buna da gerek yok, o islemi application.yaml dan da yapabilirsin:
+
+        logging:
+            level:
+                root: WARN
+                org:
+                    springframework:
+                        security: DEBUG
+
+        burada yapilan root level icin loggin level in WARN olmasi ve org.springframework.security path i icin ise DEBUG olmasi. ayni seyi soyle de yapabiliriz:
+
+        logging:
+          level:
+            root: WARN
+            org.springframework.security: DEBUG
+
+        bence daha danlasilir bir durum su sekilde.
+
+        su sekilde ise:
+
+        logging:
+            path: /var/logs/ 
+            file: TacoCloud.log 
+            level:
+                root: WARN
+                org:
+                    springframework:
+                        security: DEBUG
+
+        burada file path ini de vermis oluyoruz. bir dile fie name ini.
+        default olarak 10 MB lik log file lari seklinde spring rotate eder.
+
+    Using Special Property Values:
+        property olusturuken, sadece hard-coded string value kullanmana gerek yok. Onun yerine baska property leri de kullanabilirsin:
+
+        greeting:
+            welcome: You are using ${spring.application.name}
+
+        gibi.
+    
+    Creating Own Configuration Properties
+        simdiye kadar nasil properties eklenebilir onu gorduk. simdi ise nasil kullanilabilir onu gorecegiz:
+
+        @ConfigurationProperties annotation i ile kullanabiliriz.
+
+        db den ilk 20 record u gelitirmesini saglamak icin:
+
+        @GetMapping
+        public String ordersForUser( @AuthenticationPrincipal User user, Model model) {
+            Pageable pageable = PageRequest.of(0, 20); 
+            model.addAttribute("orders", orderRepo.findByUserOrderByPlacedAtDesc(user, pageable));
+            return "orderList";
+        }
+
+        Buradaki pageable degerini configution olarak alabiliriz. bunu properties dosyasindan alabilmek icin:
+
+            ,,,
+            @ConfigurationProperties(prefix="taco.orders")
+            public class OrderController {
+                private int pageSize = 20;
+                
+                public void setPageSize(int pageSize) { 
+                    this.pageSize = pageSize;
+                }
+            ...
+
+        yani controller class ina ConfigurationProperties annotation ina prefix degerini yaziyoruz. sonra da bir setter method umuz oluyor. Ayni property isminde olmasi gerekiyor. sonra properties dosyasinda bu degeri veriyoruz.
+
+        taco:
+            orders:
+                pageSize: 20
+        
+        bu kadar.
+        environment variable a eklerken ise isimlendirme degisiyor:
+            export TACO_ORDERS_PAGESIZE=20
+        cunku environment variable inin isimlendirme sekli bu sekilde oluyor.
+
+        Baska bir class aracigiyla bu degerleri de alabilirsin. Properties holder class i denir bu class a.
+
+        @Component
+        @ConfigurationProperties(prefix="taco.orders") 
+        @Data
+        public class OrderProps {
+            private int pageSize = 20;
+        }
+
+        dikkat edilmesi gereken, lombok ile getter ve setter i kullaniyorsun. Must degil.
+        @Component annotation i kullanman lazim ki SAC bunu bean olarak algilasin ve context ine eklesin. 
+        @ConfigurationProperties zaten hangi property lere ihtiyacin oldugunu soylemek icin.
+
+        sonra bu class i nerede kullanacaksan oraya inject edebilirsin:
+            ...
+            public class OrderController {
+                private OrderRepository orderRepo;
+                private OrderProps props;
+                
+                @Autowired
+                public OrderController(OrderRepository orderRepo, OrderProps props) {
+                    this.orderRepo = orderRepo;
+                    this.props = props; 
+                
+            }
+        
+        Property holder class i ile bu islemi yaparsan alacagin property yi valide edeblirsin:
+            @Valid
+            public class OrderProps {
+
+                @Min(value=5, message="must be between 5 and 25")
+                @Max(value=25, message="must be between 5 and 25")
+                private int pageSize = 20;
+            }
+
+    Defining propery meta-data
+        bu ise optional bu konudur. property lerin aciklamalarini, yani ne icin kullanilacaklarini yazmak icin kullanilirlar. buna meta data denir.
+        genelde ide ler bu meta data lar olmayinca warning verirler ama calisma sirasinda sorun olmaz.
+
+        eklemek icin root context path alinda bir META-INF dizini yaratilir ve altina additional-spring-configuration-metadata.json file i olusturulur.
+
+        bu file icine property meta-data larini yazariz. O da sunun gibi bir json formatindadir:
+
+            {
+                "properties": [
+                    {
+                        "name": "taco.orders.page-size",
+                        "type": "java.lang.String", 
+                        "description": "Sets the maximum number of orders to display in a list."
+                    } 
+                ]
+            }
+
+        bu kadar.
+
+    Working With Profiles:
+
+        Cok basit bir yaklasimla, development yaparken baska bean leri kullanmak isterken urun production dayken baska bean leri kullanmak isteyebiliriz. Mesela development da H2 database, production da mysql. Ya da development de debug level debug iken production da warn level olabilir.
+
+        bunu yapabilmek icin profile lari kullanabiliriz.
+
+        farkli profile application file lari olustururuz. 
+            application-{profileName}.{yaml/properties} seklinde olacak:
+                application-dev.yaml
+                application-prod.yaml 
+                application-dev.properties
+                application-prod.properties 
+        gibi.
+
+    Activate Profiles:
+        environment variables ile activate edilmesi oneriliyor:
+            export SPRING_PROFILES_ACTIVE=prod
+        
+        java command line ile:
+            java -jar taco-cloud.jar --spring.profiles.active=prod
+
+        birden fazla profile ile de calisabilirsin:
+            export SPRING_PROFILES_ACTIVE=prod,audit,ha
+            (run time da ne yapar bilmiyorum, ayni property leri birbirlerini ezer sanirim )
+
+        yaml da:
+
+        spring:
+            profiles:
+                active:
+                - dev
+                - prod
+                - ha
+
+    Conditionally Creating Beans with Profiles
+        Spring bean lerin profile a gore create edilmesini sagliyor.
+
+        Soyle bir senaryonuz var, dev ortamindayken birden fazla kullanicin spring load olurken eklenmesi. 
+
+        @Bean
+        @Profile("dev")
+        public CommandLineRunner dataLoader(IngredientRepository repo, UserRepository userRepo, PasswordEncoder encoder) {
+            ...
+        }
+
+        bu kod eger profile dev ise SAC a eklenir. Yoksa eklenmez.
+        birden fazla olarak da bu profile lara gore (OR operator) tanimlayabilirsin: 
+            @Profile({"dev", "qa"})
+        ya da not operator u ile:
+            @Profile("!prod")
+        birden fazla not: 
+            @Profile({"!dev", "!qa"})
+

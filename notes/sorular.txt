@@ -1,0 +1,10 @@
+chapter-2 
+	1:S- eger template reload zamaninda template de kullanilan object controller da set olmazsa ne olur.
+	2:C- template olusturulurken exception atiyor yani 500 yiyoruz. cozum olarak ise ya controller dan attribute doldurmalisin ya da template de property nin exits olup olmadigina bakmalisin.
+
+chapter-3
+	1:S: thymeleaf da bir list checkbox lar ile dolduruluyor. sonra bu checkbox larla doldurulan degerler ler baska bir model object ine aktailacak. onun icin yollar:
+
+	https://stackoverflow.com/questions/39424715/how-to-correctly-bind-checkbox-to-the-object-list-in-thymeleaf
+
+https://stackoverflow.com/questions/45956114/dynamic-checkbox-from-list-with-thymeleaf

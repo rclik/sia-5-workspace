@@ -1,0 +1,18 @@
+taco:
+  orders:
+    page-size: 10
+
+logging:
+  level:
+    com:
+      rcelik:
+        sia:
+          chaptersix:
+            DEBUG
+---
+spring:
+  profiles: prod
+
+logging:
+  level:
+    com.rcelik.sia.chaptersix: WARN

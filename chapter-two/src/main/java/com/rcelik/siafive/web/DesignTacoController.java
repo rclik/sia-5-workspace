@@ -34,6 +34,7 @@ public class DesignTacoController {
 
     @GetMapping
     public String showDesignForm(Model model){
+        log.info("[showDesignForm] model: {}", model);
         // adding type specific ingredients to the view model.
         Type [] types = Ingredient.Type.values();
         for (Ingredient.Type type : types) {
@@ -50,13 +51,17 @@ public class DesignTacoController {
     }
 
     @PostMapping
-    public String processDesign(@Valid Taco taco, Errors errors){
-        // error validation occurs then return design template
-        if(errors.hasErrors()){
-            return "design";
-        }
+    public String processDesign(@Valid Taco taco, Errors errors, Model model){
         // taco taco object is received here
         log.info("[processDesign] taco: {}", taco);
+
+        // error validation occurs then return design template
+        if(errors.hasErrors()){
+            // it is enough to set this for design template because taco object is already inside the model object
+            // it is added from html post form
+            model.addAttribute("name", "rahman");
+            return "design";
+        }
         // redirect: prefix make Spring to create redirect the request to another url which is /orders/current
         return "redirect:/orders/current"; // then the page is redirected to another url by Spring Boot
     }

@@ -40,7 +40,7 @@ buradan cikaracagimiz gibi:
 	@Bean
 		spring container bu annotation i gorunce method un return edilen object i icin container da bir instance olusturur. daha dogrusu bean tanimini alir. burada bean name i method name olarak alinir.
 
-Java ve XML based configuration in ikisinde de application contaner bean lari developer in beyani uzerine olusturur. bunu asmak icin spring automatic configuration ozelligini cikartti. 
+Java ve XML based configuration in ikisinde de application container, bean lari developer in beyani uzerine olusturur. bunu asmak icin spring automatic configuration ozelligini cikartti. 
 
 automatic configuration iki kisimdan olusur. birincisi component scanning, ikicisi ise autowiring dir.
 component scanning ile spring container bean leri kendisi bulur ve container ina bean olarak ekler. autowiring ile ise bean ler arasindaki dependency injection islerini halleder, yani birbirleriyle olarna iliskilerini gerceklestirir.
