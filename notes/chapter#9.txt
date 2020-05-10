@@ -1,0 +1,543 @@
+- Processing data in real time
+- Defining integration flows
+- Using Spring integration s Java DSL definition
+- integration with emails, file systems and other external systems
+
+Bu chapter da Spring integration kullanilarak, application in bazi 3rd party uygulamalara nasil baglanilacagini ogrenecegiz. Mesela disardaki email sistemine.
+
+Ilk olarak application imizdan file sisteme dogru uzanan bir flow yapalim. Bu islem application imizin file sisteme data gondermesini saglayacak.
+
+ilk olarak starter project imizi ve file inregration project imizi pom.xml e yazalim:
+    <dependency>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-integration</artifactId>
+    </dependency>
+    <dependency> 
+        <groupId>org.springframework.integration</groupId> 
+        <artifactId>spring-integration-file</artifactId>
+    </dependency>
+
+goruldugu gibi bir starter ve bir de file integration project ini yazmis olduk. ilk dependency spring integration icin gerekli olan ortak file lari icerirken ikinci dependency file system integration i icini gerekli olan file lari icerir.
+
+project ler de elimizde oldugundan simdi data yi gonderecegimiz bir flow tanimlayalim. 
+
+    import org.springframework.integration.annotation.MessagingGateway;
+    import org.springframework.integration.file.FileHeaders;
+    import org.springframework.messaging.handler.annotation.Header;
+
+    @MessagingGateway(defaultRequestChannel="textInChannel")
+    public interface FileWriterGateway {
+        void writeToFile(@Header(FileHeaders.FILENAME) String filename, String data);
+    }
+
+yaptigimiz is sadece bir interface olusturmak aslinda. ama uzerindeki annotation lar onemlidir.
+    - MessagingGateway annotation i derki spring integration i, run time da, bu interface uzerinden bir bean create et.
+    - MessagingGateway icindeki defaultRequestChannel ise bu instance uzerinden gelecek message larin hangi channel a aktarilacagidir. burada textInChannel kullaniliyor. yani text channel ina aktarilacaklar.
+    - writeToFile method una bakacak olursak da bir file name icin parametre aliyor. bir de String tipinde data aliyor. bunlar da anlasilabilecegi gibi... bir ayrinti su var, file name channel a gidecek olan message in header inda data parametresi ise payload inda olacagidir. bunu da annotation larla cikarabilirsin.
+
+Bu isleme message gateway diyoruz, simdi ise bu message gateway icin bir flow yazmamiz lazim. spring autoconfiguration zaten bizim icin default ini hazirliyor ama simdi bizim neler yapabileceklerimize bakalim. Flow olusturmak icin su yontemkeri kullanabiliriz:
+    - XML configuration
+    - Java configuration
+    - Java configuration with a DSL
+
+    1- Defining integration flows with XML
+        <?xml version="1.0" encoding="UTF-8"?> 
+        <beans xmlns="http://www.springframework.org/schema/beans" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:int="http://www.springframework.org/schema/integration" xmlns:int-file="http://www.springframework.org/schema/integration/file" xsi:schemaLocation="http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans.xsd http://www.springframework.org/schema/integration http://www.springframework.org/schema/integration/spring-integration.xsd http://www.springframework.org/schema/integration/file http://www.springframework.org/schema/integration/file/spring-integration-file.xsd">
+
+            <int:channel id="textInChannel" />
+
+            <int:transformer id="upperCase" input-channel="textInChannel" output-channel="fileWriterChannel" expression="payload.toUpperCase()" />
+
+            <int:channel id="fileWriterChannel" />
+
+            <int-file:outbound-channel-adapter id="writer" channel="fileWriterChannel" directory="/tmp/sia5/files" mode="APPEND" append-new-line="true" />
+        </beans>
+
+        yukaridaki beans definition larini gecelim. bu spring in kullandigi bean leri olusturmak icin kullanidigi xml configuration file i.
+
+        burada yapilan ise channel lari olusturmak. gelen message i da transform etmek.
+
+        ilk satirda bir tane channel olusturuyoruz, ismi ise textInChannel hani FileWriterGateway de kullanidigmiz.
+
+        sonra bir transformer olusturuyoruz. bu da textInChannel dan gelen message larin body sini (input olarak) buyuk harfe cevirirek output-channel imna yani fileWriterChannel a yazar. (Spring expression language kullanilarak buyuk harfe cevrilir.)
+
+        sonraki ise fileWriterChannel channel inin definition idir. bu ise sadece outbound channel adapter icin kullanilir. sonra bu channel dan da file a yazilacak.
+
+        en sonra olan ise fileWriterChannel ini file a yazan kisimdir. bu da spring integration dan gelir.
+        yaptigi sey ise basit, bir tane channel alir. sonra da bunu directory altinda message header inda gelen file name i kullanarak yazar. mode ise append imis ve new line birakiyormusuz. bu su anlama gelir, eger file o dizinde varsa gelen message i o file a  aralarina bir satir birakarak append ediceksin.
+
+        eger xml based olarak yazmak istiyorsak, bu xml definition ini configuration olarak spring e belirtmeliyiz:
+
+            @Configuration 
+            @ImportResource("classpath:/filewriter-config.xml") 
+            public class FileWriterIntegrationConfig { ... }
+        
+        ve file imizini application.properties file inin yanina koymaliyiz, cunku orasi classpath olarak goruluyor.
+
+        genel olarak soyle bir resim ortaya cikiyor:
+
+            file writer gateway ==> text in channel ==> upperCase transformer ==> file writer channel ==> file outbound channel adapter
+
+    2- Defining integration flows with Java
+        Okunmasi en kolay olanidir denebilir. Hem bu yuzden hem de spring boot un autoconfiguration i java ile ayarlari okudugundan bu yonteme basvurulabilir.
+        Bizim olusturmamiz gereken 4 tane bilesen var. Herbiri bean olarak SAC a bildirmemiz lazim. 
+        Basit bir sekilde bir configuration class i olusturacagiz. Ve bu bean larin tanimlarini burada yapacagiz:
+
+        ...
+            @Configuration
+            public class FileWriterIntegrationConfig {
+
+                // declares a transformer that updates the message to upper case. Listens input channel is textInChannel and writes the updated value to output channel fileWriterChannel 
+                @Bean
+                @Transformer(inputChannel="textInChannel",  outputChannel="fileWriterChannel")
+                public GenericTransformer<String, String> upperCaseTransformer() {
+                    return text -> text.toUpperCase(); 
+                }
+
+                 // Declares a file writer, Listens from fileWriterChannel
+                @Bean
+                @ServiceActivator(inputChannel="fileWriterChannel")
+                public FileWritingMessageHandler fileWriter() {
+                    FileWritingMessageHandler handler = new FileWritingMessageHandler(new File("/tmp/sia5/files")); // defines message handler to write the file
+                    handler.setExpectReply(false); // do not send back anything
+                    handler.setFileExistsMode(FileExistsMode.APPEND); // if the file exists then append the message to it
+                    handler.setAppendNewLine(true); // append message with new line
+                    return handler;
+                }
+            }
+        ...
+
+        Diger iki bean i yazmamiza gerek yok, cunku SAC channel name ler icin otomatik olarak directional channel lar olusturur. (tek yonlu)
+        yoksa kendmiz de olusturabiliriz:
+
+            @Bean
+            public MessageChannel textInChannel() {
+                return new DirectChannel();
+            }
+
+            @Bean
+            public MessageChannel fileWriterChannel() {
+                return new DirectChannel();
+            }
+        
+        sanirim burada method nameleri onemli. channel isimleri onlar olarak aliniyorlar. yoksa bean annotation i icine kendmiz de bean isimlerini verebiliriz.
+
+        Configuration class ini inceleyecek olursak, ilk bean transformer annotation ini almis. bu demektir ki bu bir transformer ve bunun input ve output channel i olmasi lazim. Gelen message in String seklinde oldugunu biliyoruz ve string olarak da return edecegimizden, retyrn type olarak GenericTransformer<String, String> kullanabiliriz. Sonra method icinde de gelen message i uppercase e cevirerek donduk.
+
+        Ikinci bean a gelecek olursak, bu flow daki son nokta. Onun icin ServiceActivator annotation i kullaniliyoruz, o zaman bu bean da bir yerden dinleme yapmalidir. Onun icin inputChannel i da setlememiz lazim. Sonra gelen message larin handle edilmesi icin bir handler yazmamiz lazim. Biz de file handler isimizi gorecek. Onun icin bir FileWritingMessageHandler object i olusturuyoruz ve icine message lari nereye yazicagimiz bilgisini veriyoruz. handler.setExpectReply(false) islemini yapiyoruz. cunku normal sartlarda islem bitince geriye bir bilglendirme donulur. Biz ise bu gelistirmeyi yapmadik. default degeri de true oldugundan spring o gelistirmeyi yapmamizi bekler. sonraki iki satirda da file varsa ne yapilacagi ayarlamalari var.
+
+    3- Spring Integration in Java DSL ile Integration Flow Yazma 
+        Spring Integration in sundugu Java DSL ile flow belirleme durumu en basitidir. Bir builder mantigiyla bean leri teker teker yaratmadan, sadede bir bean ile flow u belirleyebilriz.
+
+        ...
+            @Configuration
+            public class FileWriterIntegrationConfig {
+                @Bean
+                public IntegrationFlow fileWriterFlow() {
+                    return IntegrationFlows.from(
+                                                MessageChannels.direct("textInChannel"))            // this part is transformer, line is input channel
+                                                .<String, String>transform(t -> t.toUpperCase())    // makes transform operation
+
+                                            .handle(                                                // handles incoming message
+                                                Files.outboundAdapter(new File("/tmp/sia5/files"))  // this part is for ServiceActivator
+                                                .fileExistsMode(FileExistsMode.APPEND)
+                                                .appendNewLine(true))
+                                            .get();
+                }
+            }
+        ... 
+        
+        boylece tek bir line da bir bean ile ayni isi gormus olduk. Dikkat edersek, transformer dan sonra gelen channel i yazmadik. Cunku orada bir islem yapmiyoruz. Eger yapmak istersek yada sadece channel in varligini gormek istersek onu da yazabiliriz:
+
+        ...
+            @Bean
+            public IntegrationFlow fileWriterFlow() {
+                return IntegrationFlows
+                    .from(MessageChannels.direct("textInChannel"))
+                    .<String, String>transform(t -> t.toUpperCase())
+                    .channel(MessageChannels.direct("fileWriterChannel"))
+                    .handle(Files
+                            .outboundAdapter(new File("/tmp/sia5/files"))
+                            .fileExistsMode(FileExistsMode.APPEND)
+                            .appendNewLine(true))
+                    .get();
+            }
+        ...
+
+        Bu sekilde Integration Flow olusturma daha kolay olabilir ama dikkat edilmesi gerekir. Cunku yanlis yazmaya daha musaittir.
+
+Spring Integration Dunyasina Dalalim:
+
+    Spring Integration Flow cok ise yarar. Genel olarak component leri sunlardir:
+
+        - Channels - bir flow element inden baska bir flow element ine data gecisini saglayan yoldur.
+        - Filters - bazi kriterlere gore message in flow icerisinde ilerlemesini veya ilerlememesini saglar.
+        - Transformers - flow daki message payload larinin tamamen degismesi veya update edilmesi icin kullanilir. 
+        - Routers - message header larina gore gelen message larin baska channel lara dagitilmasini saglar.
+        - Splitters - gelen message i birden falza message a boler ve onlari baska channel lara gonderir.
+        - Aggregators - splitter in tam tersi, birden fazla channel dan gelen message lari birlestirir ve bir channel a gonderir.
+        - Service Activators - gelen message i bir java method u ile handle ederek output channel ina gonderir. O handler da file yazar vb. isler le flow u bitirir.
+        - Channel Adapters - channel lari baska external channel lara baglamak icin kullanilir. 
+        - Gateways - data yi integration flow a aktarmak icin kullanilan interface dir.
+
+        Simdi bunlarin uzerinden hizlica gecelim:
+
+        1- Message Channels
+            Spring Integration Flow daki tum element leri birbirlerine baglayan pipe lardir.
+
+            Spring IntegrationFlow birden fazla channel tipi sunar:
+                - PublishSubscribeChannel - burada bir veya birden fazla consumer a publish edilecek bir flow olusturulur:
+                                 | -> element2    
+                        element1 | -> element3
+                    
+                    boyle bir flow dusunebilirsin.
+                - QueueChannel - message lar bir queue ya eklenir. fifo fashion ile calisir. eger birden fazla consumer varsa, sadece bir tanesi message lari alabilir. 
+                - PriorityChannel - QueueChannel ile ayni calisir. Farkli olarak header inda bir Priority degeri bulundurur ve buna gore queue siralanir.
+                - RendezvousChannel - QueueChannel ile ayni ama fark olarak consumer message i almadan baska bir message kabul etmez. pipe i bloklar. 
+                - DirectChannel - PublishSubscribeChannel a benzer ama bir consumer a iletir. Ve bir thread ile islem baslar ve devam eder. (element1 deki thread ile) Transaction support edilir.
+                -  ExecutorChannel - DirectChannel ile benzer ama bu kere pipe den sonra gelen consumer in calismasi ayni thread de olmaz, farkli bir thread de gerceklesir. Yani transaction support u yoktur.
+                - FluxMessageChannel - reactive message channel i dir. Async islemler icin kullanlir. Ileride gorecegiz.
+
+                Eger flow icindeki channel lari belirtmezsek spring boot DirectChannel olarak olusturur. Explicit olarak vermek istersek, o zman kendimizi bean definition i ile verebiliriz.
+                    @Bean
+                    public MessageChannel orderChannel() {
+                        return new PublishSubscribeChannel();
+                    }
+
+                channel ler element ler icin input ve output channel olarak verilebilirler. ServiceActivator a ama sadece inputChannel verilebilir. Ayni sekilde Gateway e de sadece outputChannel verilebilir.
+
+                QueueChannel tipini kullanirken dikkat etmemiz gereken bir sey var. Queue tipi channel larda poller kullanilir. bu ise queue nun kendisidir.
+                    @Bean
+                    public MessageChannel orderChannel() {
+                        return new QueueChannel();
+                    }
+                bunun consumer i bir tane olsun:
+                o zaman basinda bir poller annotation i olmali ki poller calisabilsin:
+
+                    @ServiceActivator(inputChannel="orderChannel", oller=@Poller(fixedRate="1000"))
+
+                bu poller, 1 saniye de bir queue dan okuma yapacak sekilde ayarlanmistir.
+        2- Filters
+            Filter lar pipeline in ortasinda bulunurlar. message in ilerleyip ilerlememesinden sorumludurlar. adi ustunde bir filtre gorevi ustlenirler.
+
+            bunlar input ve output channel almalari lazimdir.
+
+            mesela bu bir even number filter i dir.
+
+            @Filter(inputChannel="numbers", outputChannel = "evenNumbers")
+            public boolean evenNumberFilter(Integer number) {
+                return number % 2 == 0;
+            }
+
+            Alternatif olarak Java DSL ile de soyle yapilabilir:
+            @Bean
+            public IntegrationFlow evenNumberFlow(AtomicInteger integerSource) {
+                return IntegrationFlows
+                        ...
+                        .<Integer>filter((p) -> p % 2 == 0)
+                        ...
+                        .get();
+            }
+
+            Input ve output channel lar alir.
+
+            Integer bir predicate kullanmamiz lazim. 
+        3- Transformers
+            Gelen message i degistirmek icin kullanilir. Message payload i degistiriilr.
+            Bu ornekte gelen string message i roman harflerine donusturecegiz
+
+                @Bean
+                @Transformer(inputChannel="numberChannel", outputChannel="romanNumberChannel")
+                public GenericTransformer<Integer, String> romanNumTransformer() {
+                    return RomanNumbers::toRoman;
+                } 
+            
+            Bunun DSL karsiligi:
+                @Bean
+                public IntegrationFlow transformerFlow() {
+                    return IntegrationFlows 
+                        ...
+                        .transform(RomanNumbers::toRoman)
+                        ...
+                        .get();
+                }
+
+            transform method u icinde islemlerimiz yaptik, dikkat et.
+
+            Input ve output channel alir.
+        4- Routers 
+            Gelen message lari baska channel lara redirect ederek.
+            Soyle bir senaryo olsun;
+            gelen message lari tek ve cift olmalarina gore baska channel lara gonderelim:
+
+                @Bean
+                @Router(inputChannel="numberChannel")
+                public AbstractMessageRouter evenOddRouter() {
+                    return new AbstractMessageRouter() {
+                        @Override
+                        protected Collection<MessageChannel> determineTargetChannels(Message<?> message) {
+                            Integer number = (Integer) message.getPayload();
+                            if (number % 2 == 0) {
+                                return Collections.singleton(evenChannel()); 
+                            }
+                            return Collections.singleton(oddChannel());
+                        }
+                    };
+                }
+
+                @Bean
+                public MessageChannel evenChannel() {
+                    return new DirectChannel();
+                }
+                @Bean
+                public MessageChannel oddChannel() {
+                    return new DirectChannel();
+                }
+
+            Bu kadar. Yapilan is Router annotation ini kullanarak AbstractMessageRouter object i donen bir method yazmak. AbstractMessageRouter ise bir tane abstract class. o class in icinde message larin channel larini degistiren islemleri icinde bulundurur.
+
+            Bunu Java DSL ile de yapabiliriz.
+                @Bean
+                public IntegrationFlow numberRoutingFlow(AtomicInteger source) {
+                    return IntegrationFlows 
+                        ...
+                        .<Integer, String>route(n -> n%2==0 ? "EVEN":"ODD", mapping -> mapping
+                        .subFlowMapping("EVEN", sf -> sf.<Integer, Integer>transform(n -> n * 10).handle((i,h) -> { ... }))
+                        .subFlowMapping("ODD", sf -> sf .transform(RomanNumbers::toRoman) .handle((i,h) -> { ... })))
+                        .get();
+                }
+            
+            Buradaki kod biraz daha karmasik. route method unu kullaniyoruz. Bu method icine bir predicate function aliyor. return value larina gore de subFlowMapping islemlerini yapiyoruz. aslinda zor da degilmis.
+        5- Splitters
+            Gelen message i birden fazla message a cevirip her birini ayri channel a aktarmak icin de kullanilir.
+            Implementation i icin ise gelen messega i bir POJO ile split etmek iyi bir uygulamadpr.
+
+                public class OrderSplitter {
+                    public Collection<Object> splitOrderIntoParts(PurchaseOrder po) {
+                        ArrayList<Object> parts = new ArrayList<>(); 
+                        parts.add(po.getBillingInfo()); 
+                        parts.add(po.getLineItems());
+                        return parts;
+                    }
+                }
+            
+            Simdi bu POJO kullanilirak gelen  message i split edelim:
+
+                @Bean
+                @Splitter(inputChannel="poChannel", outputChannel="splitOrderChannel")
+                public OrderSplitter orderSplitter() {
+                    return new OrderSplitter();
+                }
+
+            Simdi ise routing islemini yapalim:
+
+                @Bean
+                @Router(inputChannel="splitOrderChannel")
+                public MessageRouter splitOrderRouter() {
+                    PayloadTypeRouter router = new PayloadTypeRouter(); 
+                    router.setChannelMapping(BillingInfo.class.getName(), "billingInfoChannel");
+                    router.setChannelMapping(List.class.getName(), "lineItemsChannel"); 
+                    
+                    return router;
+                }
+
+            Router da ise yapilan belli. gelen message lari bir POJO ya cevirmistik. O POJO icindeki property type larina gore yeni channel lara aktarma yaptik o kadar.
+
+            Eger gelen line items larini teker teker islemek istiyorsak;
+
+                @Splitter(inputChannel="lineItemsChannel", outputChannel="lineItemChannel")
+                public List<LineItem> lineItemSplitter(List<LineItem> lineItems) {
+                    return lineItems;
+                }
+
+            bu kadar. router a da gerek yok. bire bir oldugu icin.
+
+            Simdi ise bu islemin Java DSL karsiligini yazalim:
+
+                @Bean
+                public IntegrationFlow numberRoutingFlow(AtomicInteger source) {
+                    return IntegrationFlows 
+                        ...
+                        .split(orderSplitter())
+                        .<Object, String> route(
+                            p -> {
+                                if (p.getClass().isAssignableFrom(BillingInfo.class)) {
+                                    return "BILLING_INFO";
+                                } else {
+                                    return "LINE_ITEMS";
+                                }
+                            },
+                            mapping -> mapping
+                                .subFlowMapping("BILLING_INFO", sf -> sf.<BillingInfo> handle((billingInfo, h) -> { ...}))
+                                .subFlowMapping("LINE_ITEMS", sf -> sf.split().<LineItem> handle((lineItem, h) -> {...}))
+                        )
+                        .get();
+                }
+
+            Gelen message i POJO ya ceviren method u kullandik, sinra teker teker split ettik.
+        6- Service Activators
+            Message larin flow dan cikarilmasini saglarlar. bazen flow un son elemani olarak kullanilirlar. bzen de bir dis islem yapip devam edebilmesi icin kullanilirlar.
+            Cok basit olarak;
+
+                @Bean
+                @ServiceActivator(inputChannel="someChannel")
+                public MessageHandler sysoutHandler() {
+                    return message -> {
+                        System.out.println("Message payload: " + message.getPayload());
+                    };
+                }
+            burada cok basit bir handler yazdik, system out ile ekrana basiyor gelen message lari. bir inputChannel i varken output channel i yoktur. MessageHandler return eder. bu message handler da gelen message i handle eder.
+
+            bir @ServiceActivator annottaion i kullaniliyoruz ve icine bir input channel veriyoruz.
+            bu method un ise return type i MessageHandler olmalidir.
+
+                @Bean
+                @ServiceActivator(inputChannel="orderChannel", outputChannel="completeOrder")
+                public GenericHandler<Order> orderHandler(OrderRepository orderRepo) {
+                    return (payload, headers) -> {
+                        return orderRepo.save(payload); 
+                    };
+                }
+            burada ise gelen message dis dunyaya aciliyor ama ayni zamanda baska bir channel a iletiliyor. burada GenericHandler kullanildigina be outputChannel set lendigine dikkat etmek lazim.
+
+            bu islemleri Java DSL ile de yapabilisin.
+
+                @Bean
+                public IntegrationFlow someFlow() {
+                    return IntegrationFlows
+                        ...
+                        .handle(msg -> {
+                            System.out.println("Message payload: " + msg.getPayload());
+                        })
+                        .get();
+                }
+
+            bu sekilde gelen message lari system out ile ekrana basabilisin.
+
+            ikinci ornekte oldugu gibi gelen Order lari database e ekleyip flow un devam etmesini saglamak icin:
+
+                @Bean
+                public IntegrationFlow orderFlow(OrderRepository orderRepo) {
+                    return IntegrationFlows
+                        ...
+                            .<Order>handle((payload, headers) -> { 
+                                return orderRepo.save(payload);
+                            })
+                        ...
+                        .get();
+                }
+
+            burada devam eden channel icin (output channel) yeni bir isim vermene gerek yok, ayni sekilde gelen channel icin (input channel) icin de yeni bir isim kullanmana gerek yok. flow zaten devam ediyor.
+        7- Gateways
+            Gateway ler ise flow a data gondermek icin kullanilirlar. Opsiyonel olarak ise message handle edildikten sonra gelen response u handle etmek icin kullanilirlar.
+
+                @Component
+                @MessagingGateway(defaultRequestChannel="inChannel", defaultReplyChannel="outChannel")
+                public interface UpperCaseGateway {
+                    String uppercase(String in);
+                }
+
+            bu gateway ornegi. bir interface bunu spring bean olarak algilamasi icin @Component annotation i kullaniyor. sonra bundan bir proxy instance i olusturuyor. o da bean imiz oluyor. 
+
+            @MessagingGateway annotation i ise bunun Spring Integration Flow icin bir gateway oldugunu soylemek icin kullanlir. icine ise channel bilgilerini belirtiyoruz.
+
+            upperCase method u call edildiginde flow baslatilacak ve icine data pass edilecek.
+
+            Bunun DSL karsiligi ise:
+
+                @Bean
+                public IntegrationFlow uppercaseFlow() {
+                    .from("inChannel")
+                    .<String, String> transform(s -> s.toUpperCase())
+                    .channel("outChannel")
+                    .get();
+                }
+            
+            bu flow u define ettikten sonra yukaridaki gateway araciligiyla data yi flow a gecirebilirsin.
+        8- Channel Adapters
+            Flow larin giris veya cikis noktalaridir. bunlar araciligiyla iki flow birbirleriyle birlestirilebilir.
+
+            yani bizim bir flow umuz olacak, bunun ile baska flow lari birlestirecegiz.
+
+            bizim flow umuzun basina eklenecek bir flow oldugunu dusunelim. bizim flow, o flow dan data alacak. bu data saglayan flow ile birlesmek icin inbound channel adapter ismi kullanilir. Benzer sekilde bizim flow baska bir flow a data saglayacagini dusundugumuz senaryoda ise bu iki flow u birlestirmek icin yapilan baglantiya outbound channel adapter denir.
+
+                @Bean
+                @InboundChannelAdapter(poller=@Poller(fixedRate="1000"), channel="numberChannel")
+                public MessageSource<Integer> numberSource(AtomicInteger source) {
+                    return () -> {
+                        return new GenericMessage<>(source.getAndIncrement());
+                    };
+                }
+                
+            bu inbound channel adapter, source olarak gelen data ya bir ekleyecerek kendisi icinde bulunun channel a data yi gonderir. Diger data yi ise bagli oldugu flow dan 1 saniye de bir check ederek isleme sokar.
+
+            Bunun Java DSL ile soyle tanimlayabiliriz:
+                @Bean
+                public IntegrationFlow someFlow(AtomicInteger integerSource) {
+                    return IntegrationFlows 
+                        .from(integerSource,
+                              "getAndIncrement",
+                              c -> c.poller(Pollers.fixedRate(1000))
+                        )
+                        ...
+                        .get();
+                }
+
+            Soyle bir senaryo da kullanilabilirler. Mesela bir directory de bir file yazinca bunu dinleyen bir yapimiz olabilir ve bu bilgiyi bir channel a aktarabiliriz.
+
+                @Bean 
+                @InboundChannelAdapter(channel="file-channel", poller=@Poller(fixedDelay="1000"))
+                public MessageSource<File> fileReadingMessageSource() {
+                    FileReadingMessageSource sourceReader = new FileReadingMessageSource();
+
+                    sourceReader.setDirectory(new File(INPUT_DIR));
+                    sourceReader.setFilter(new SimplePatternFileListFilter(FILE_PATTERN));
+                    
+                    return sourceReader;
+                }
+            
+            Burada bir bean olusturuyoruz. bu bean bir directory altindaki yazilan belirtilen file formatina gore uygun olan file lari oluyor ve MessageSource(File) object i olarak channel ina gonderiyor. Buradaki FileReadingMessageSource object Spring integration endpoint module olarak geciyor (yani spring in kendisinin tanimladigi inbound channel adapter). Yani enpoint module uzerinden InboundChannelAdapter imizi calistirmis olduk. File yazan inbound channel adapter imizi tanimlamak icin ise su java dsl i kullanbiliriz.
+
+                @Bean
+                public IntegrationFlow fileReaderFlow() {
+                    return IntegrationFlows
+                        .from(Files.inboundAdapter(new File(INPUT_DIR)).patternFilter(FILE_PATTERN))
+                        .get();
+                }
+        9- Endpoint Modules
+            Spring kendimizin flow yaratabilmemizi saglarken bunlari besleyebilecegimiz inbound channel adapter lar da sunar bize.
+            AMQP
+            Spring application events RSS and Atom Filesystem
+            FTP/FTPS
+            GemFire
+            HTTP
+            JDBC
+            JPA
+            JMS
+            Email
+            MongoDB
+            MQTT
+            Redis
+            RMI
+            SFTP
+            STOMP 
+            Stream
+            Syslog 
+            TCP/UDP
+            Twitter
+            Web Services 
+            WebFlux 
+            WebSocket 
+            XMPP 
+            ZooKeeper
+
+
+
+            
+
+
+
+
+
+
+
