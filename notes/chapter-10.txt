@@ -1,0 +1,32 @@
+Reactive Programming In Spring
+    Imperative code:
+        Bir islem yapmak icin hazirlanan ayri task larin oldugunu dusunun. Islemin bitmesi icin. bu tasklarin sirasiyla bitmesi gerekir. Bu kod sekline denir.
+    Reactive code:
+        Bir islem icin calisan task lar paralel sekilde calisabiliyorsa buna reactive code denir.
+    
+    Spring de bu islemi yapan Reactor project idir.
+
+    ilk olarak reactive programlama mantigina bakalim:
+
+    1- Understanding the reactive Programming
+        Sunu unutmamak lazim, reactive programlama kurtarici degildir. Imperative programlamadan daha gelismis de degildir. sadece bazi use case lerde Imperative programlamadan daha avantajlidir. Biz bu use case leri anlayarak onu nerede kullanacagimizi ogrenmeliyiz.
+
+        Simdi soyle dusunelim, imperative programlamada kod adim adim task lari bitiriyor. biri bitmeden diger kisima gecmiyor. java da kod ilerlemesi icin bir thread kullaniliyor. yani bu thread task lari kosuyor. i/o, remote server a baglanma veya db den code celen task larimiz olsun. bu task lar uzun surebilir. bu task larin bitmesi icin de thread block lanir. bu block lama da bosa kaynaklarin kullanilmasi demektir. bu durum, imperative programlamanin eksik yanidir.
+
+        Ayrica bir task in sagladigi data infinite olabilir. mesela bir oda nin sicakligi, her zaman degiskendir ve ne zaman update olacagi belli degildir. bunu imperative programlama ile cozebiliriz ama yine yukarida belirttigimiz thread block durumuna duseriz. yani resource larin kotu yonetilmesi durumu meydana gelir.
+
+        Bu problemi imperative programlama ile cozebililiriz. Mesela thread ler kullaniriz ama o da yine bazen tam olarak cozmez. yukarda belirttigimiz gibi. ve thread ler ile ugrasmak sync sorunlarini da beraberinde getirir. bu da kodun complexity sini arttirir.
+
+        Reactive programlama, dogasi geregi declarative olarak gecer. Yani, code un birbirleri pesi sira kosacak instruction lar butunu olmasi yerine code u bir stream gibi durunebiliriz. bir data bu stream uzerinde ilerler. ve ilgili yerlerde isleme tabi olunur ve stream in sonundan cikar.
+
+         Reactive programlamada data endless olabilir ama ne zaman hazir olursa o zaman thread calisir. Bu sekilde thread block lanmaz.
+
+         Bunu suna benzetebiliriz: 
+            Islatmak icin su balonlari veya bahce hortumu kullanabiliriz. su balonlarinin tasiyabilecegi belli bir su depo lari vardir. bir yeri islatmak icin bu su balonlarindan birden fazla kullanabilirsin ama depolari kadar kendini ayarlayabilirsin. bahce hortumunda ise suyu istedigin gibi kullanabilirsin.
+
+            1.1- Defining Reactive Streams
+                Back Pressure
+
+
+            https://www.gremlin.com/chaos-monkey/the-origin-of-chaos-monkey/
+                
