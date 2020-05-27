@@ -17,7 +17,7 @@ Reactive Programming In Spring
 
         Bu problemi imperative programlama ile cozebililiriz. Mesela thread ler kullaniriz ama o da yine bazen tam olarak cozmez. yukarda belirttigimiz gibi. ve thread ler ile ugrasmak sync sorunlarini da beraberinde getirir. bu da kodun complexity sini arttirir.
 
-        Reactive programlama, dogasi geregi declarative olarak gecer. Yani, code un birbirleri pesi sira kosacak instruction lar butunu olmasi yerine code u bir stream gibi durunebiliriz. bir data bu stream uzerinde ilerler. ve ilgili yerlerde isleme tabi olunur ve stream in sonundan cikar.
+        Reactive programlama, dogasi geregi declarative olarak gecer. Yani, code un birbirleri pesi sira kosacak instruction lar butunu olmasi yerine code u bir stream gibi dusunebiliriz. bir data bu stream uzerinde ilerler. ve ilgili yerlerde isleme tabi olunur ve stream in sonundan cikar.
 
          Reactive programlamada data endless olabilir ama ne zaman hazir olursa o zaman thread calisir. Bu sekilde thread block lanmaz.
 
@@ -26,7 +26,156 @@ Reactive Programming In Spring
 
             1.1- Defining Reactive Streams
                 Back Pressure
+                    Back pressure, bir islem yapilirken isleyisin sikbogaz olacagi yere denir. Genelde computational islemlerin cok kullanildigi yerler veya network un cok kullanildigi yerler backpressure yaratir.
+                    Ornek olarak ise bir paletten urunlerin geldigini dusun, bir kisi de gelen urunleri sarip urunleri kaldiriyor. Bu palet cok urun gonderiyor. Oyle ki calisan yetisemiyor. calisan ne yapabilir; 
+                        Paletin hizini azaltabilir. (Control)
+                        Gelen urunleri daha sonra sarmak uzere yan tarafa koyabilir. (buffering)
+                        Gelen urunleri gizli gizli cope atabilir (dropping)
+                        Fazla gelen urunleri birak. Ne olursa olsun.
+                    Herbir cozum yolu da istenmez cunku kendilerine ozel drawback lari vardir.
+                    En iyi opsiyon controlling dir. Ama her zaman mumkun degildir. Musteri beklemek istenmez.
+                    Sonra buffering gelir. O da iyi bir cozum ama nereye kadar buffer edebilirsin.
 
+                    Backpressure i handle etmek icin en iyi yollar stream leri kullanmaktir. Yani backpressure kodunun islemi bittigi anda diger islemlerin baslatilarak sistemin daha verimli kullanilmasi. Bunun icin JavaRx kullanilabilir. Diger dillerde ise kendi yontemleri vardir.
+                    
+                    Bu ornekte, backpressure calisanin urunleri sarmasidir. diger cozum yollari ise bu backpressure in cozum stratejileridir.
 
-            https://www.gremlin.com/chaos-monkey/the-origin-of-chaos-monkey/
+                Async islemleri gorduk. O islemleri baska bir thread de cozmemizi sagliyordu. Ama backpressure a is dusunce, consumer in bogulmamasi icin ona handle edebilecegi sekilde data gonderilmesinin saglandi bir yapi kurmamiz lazim. 
+
+                Java da Stream ler ve Reactive Stream ler vardir.
+                Isimleri benzerdir ve functional API ile yazilabilirler ama birbirlerinin aynisi degillerdir.
+                Java Streams, sync olarak sonlu dataset ler uzerinde calisir. Collection lar uzerinde iterate etmek icin kullanlirlar.
+                Reactive Streams ise async olarak sonsuz dataset uzerinde calisir. Dataset uzerindeki data ne zaman uygun olursa o zaman isleme baslar.
+
+                Reactive Stream Specification da su interface ler vardir:
+                    - Publisher
+                        Herbir Subscription uzerinden Subscriber a data saglayan elemandir.
+                            public interface Publisher<T> {
+                                void subscribe(Subscriber<? super T> subscriber);
+                            }
+
+                        subscribe method uyla hangi Subscriber larin subscribe olabilecegini belirtiyoruz.
+
+                    - Subscriber:
+                        Bir kere subscribe olduktan sonra Publisher dan gelen event leri handle eder.
+                            public interface Subscriber<T> {
+                                void onSubscribe(Subscription sub);
+                                void onNext(T item);
+                                void onError(Throwable ex);
+                                void onComplete();
+                            }
+                        Subscriber subscribe oldugunda ilk event onSubscribe method una gelir. Subscription object i ile gelir.
+
+                    - Subscription:
+                        Subscriber in kendi Subscription ini yonetmesi icin kullanilir.
+                            public interface Subscription {
+                                void request(long n);
+                                void cancel();
+                            }
+                        subscriber bu interface ile request almak veya almamak kararini verir. (request or cancel)
+                        request method undaki long parametresi kac tane request alacagini soylemek icin kullanilir. (backpressure burada ortaya cikiyor.)
+                        Subscriber subsribe olduktan sonra, Publisher in her publish ettigi elemean onNext method una gelir. Eger bir problem ortaya cikarsa onError methoduna duser. Publisher ile islem bitince ise onComplete method una duser.
+
+                    - Processor:
+                        Processor ise Producer ile Subscriber in birlesimidir. 
+                            public interface Processor<T, R> extends Subscriber<T>, Publisher<R> {}
+                        Subscriber icin receive yaparken Producer icin publish islemlerini yapar.
+
+                Project Reactor is spring in Reactive Streams i sundugu project dir. Simdi onu nasil kullanacagimizi ogrenecegiz.
+            
+            1.2- Getting Starting with Reactor
+                Ilk olarak dusunme mantigimizi degistrimemiz lazim. Simdi instruction lari sira ile yapmak yerine bir pipeline olusturarak stream in o pipe line dan gecirilmesini saglayacagiz. 
+
+                Ornek olarak ise, Person in ismini alacagimizi dusunelim. Ismi alicaz. uppercase e cevirecez, sonra da greeting message ini olusturacaz. sonra message i ekrana basicaz.
+
+                    String name = "Craig";
+                    String capitalName = name.toUpperCase();
+                    String greeting = "Hello, " + capitalName + "!"; System.out.println(greeting);
+
+                burada her instruction ayni thread de birbiri arkasina sirayla, tammalanarak ilerler.
+
+                Mono.just("Craig")
+                    .map(n -> n.toUpperCase()) 
+                    .map(cn -> "Hello, " + cn + "!") 
+                    .subscribe(System.out::println);      
+
+                Burada bir subsriber-publisher ornegi ile yukardaki islemin aynisini yapiyoruz. Simdilik cok ayrintiya girmeyelim. Burada ise hangi thread tarafindan hangi instruction calistirildigini soyleyemeyiz. Ama simdilik onemli degil. 
+
+                Mono Reactor un iki ana tiplerinden biridir. Digeri ise Flux dir. Mono, uzunlugu sabit islemler icin kullanilan Publisher implementation i dir. Flux ise uzunlugu sabit olmayan Publisher implementation idir. 
+
+                Reactor ile RxJava birbirlerine benziyorlar. Mono ile Flux Observable ile Single ile ayni gibi dusunebiliriz. Mantiklari aynidir. Ama farkli tiplerdir. Reactor ile bu iki tipleri birbirlerine cevirebiliriz. 
                 
+                Yukardaki ornekte, just method u bir ilk data object ini create etmek icin kullanilir. Yukaridaki kodda ne olur?
+                Ilk olarak Mono, data yi olusturur ve yayar. (just)
+                Sonra map method u data yi alir. Icindeki islemi yaptiktan sonra onu bir sonraki pipeline a iletir.
+                Ikinci map islemi de data yi alir ve isler. Sonra pipeline daki bir sonraki islem icin return eder.
+                subscribe method unda ise islem sonlandirilir. bir consumer dir. gelen message i ekrana basar.
+
+                buradaki islemler farkli thread lerde yapilmasi uzerine kurulur ama thread bosta ise ayni thread de farkli pipeline daki islmeleri yapabilir.
+
+            1.3- Adding Reactor Dependencies
+                Bu dependency i eklemek yeterli olacaktir.
+                    <dependency> 
+                        <groupId>io.projectreactor</groupId>
+                        <artifactId>reactor-core</artifactId>
+                    </dependency>
+                Testlerinin yapilmasi icin ise 
+                    <dependency> 
+                        <groupId>io.projectreactor</groupId> 
+                        <artifactId>reactor-test</artifactId>
+                        <scope>test</scope>
+                    </dependency>
+
+                Spring projesine bunu eklerken version ekleme veya bir configuration yapmana gerek yok. Ama spring projesi disinda bunu kullanman gerekirse, Reactor un BOM (Bills of metarials) i eklemen lazim.
+
+                    <dependencyManagement>
+                        <dependencies>
+                            <dependency> 
+                                <groupId>io.projectreactor</groupId> 
+                                <artifactId>reactor-bom</artifactId> 
+                                <version>Bismuth-RELEASE</version> 
+                                <type>pom</type> 
+                                <scope>import</scope>
+                            </dependency>
+                        </dependencies>
+                    </dependencyManagement>
+
+                Simdi project de Flux ve Mono kullanilabilir.
+            
+            1.4- Applying Common Reactive operations
+                Mono ve Flux ana tiplerdir. Bunlardan sonra 500 den fazla operation lar vardir. Bu operation lari soyle kategorize edebiliriz:
+                    - creation operations
+                    - combination operations
+                    - transformation operations 
+                    - logic operations
+                
+                Mono ve Flux daki bazi operation lar aynidir. 
+                
+                1.4.1. Creating reactive types
+                    Normalde reactive tipleri biz olusturmayiz bir yerden aliriz. Ama bazen ise biz olustururuz. olusturmak icin ise static method olan just method unu kullaniriz (Mono ve Flux da da aynidir.)
+
+                        @Test
+                        public void createAFlux_just() {
+                            Flux<String> fruitFlux = Flux.just("Apple", "Orange", "Grape", "Banana", "Strawberry");
+                        }
+                    
+                    buraya kadar Flux yaratildi ama burada flow olmaz. cuku subsriber yok. O zaman ekleyelim:
+                        fruitFlux.subscribe(
+                            f -> System.out.println("Here's some fruit: " + f)
+                        );
+                    bu kadar, simdi subscriber imiz da oldugu icin flow olusacaktir.
+
+                    flow icindeki elemanlari test etmek icin ekrana basmaktansa StepVerifier kullanarak islemi yapabiliriz:
+                        StepVerifier.create(fruitFlux) 
+                            .expectNext("Apple") 
+                            .expectNext("Orange") 
+                            .expectNext("Grape")
+                            .expectNext("Banana") 
+                            .expectNext("Strawberry") 
+                            .verifyComplete();
+                    bu daha iyi bir test ortami saglar.
+
+                        Creating From Collections
+
+
+
