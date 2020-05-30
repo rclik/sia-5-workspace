@@ -175,7 +175,444 @@ Reactive Programming In Spring
                             .verifyComplete();
                     bu daha iyi bir test ortami saglar.
 
+                    Not: Mono da birden fazla elemen ile just yapamazsin cunku Mono sadece bir elemenlidir.
+
                         Creating From Collections
+                            Flux lari collection dan olusturabiliriz. 
+                            Mono lar olusturulamamaz. Cunku bir elemenalilardir.
+                            
+                            Array den olusturmak
+                                String[] fruits = new String[] {"Apple", "Orange", "Grape", "Banana", "Strawberry" };
+                                Flux<String> fruitFlux = Flux.fromArray(fruits);
+                                StepVerifier.create(fruitFlux) .expectNext("Apple") .expectNext("Orange") .expectNext("Grape") .expectNext("Banana") .expectNext("Strawberry") .verifyComplete();
+
+                            ArrayList, HashSet gibi Iterable interface ini implement eden class lardan olusturabiliriz:
+                                Flux<String> fruitFlux = Flux.fromIterable(fruitList);
+
+                            Stream den oluturabiliriz:
+                                Stream<String> fruitStream = Stream.of("Apple", "Orange", "Grape", "Banana", "Strawberry");
+                                Flux<String> fruitFlux = Flux.fromStream(fruitStream);
+
+                        Generating Flux Data
+                            range()
+                                range(m, n);
+                                burada bir start ve end point veriyoruz, ona gore bir Flux objesi olusutruyor.
+
+                                    @Test
+                                    public final void generateAFlux_range() {
+                                        Flux<Integer> intervalFlux = Flux.range(1, 5);
+                                        StepVerifier.create(intervalFlux).expectNext(1, 2, 3, 4, 5);
+                                    }
+                            
+                            interval()
+                                interval method unda ise bir Duration object i veriyoruz. Sifirdan baslayarak interval degerini ekleye ekleye ilerliyor. Bu limitsiz bir degere kadar cikabilir ama onun icin take method unu kullanarak bir kac tane elemean almak istedgimizi belirtiyoruz.
+
+                                    @Test
+                                    public final void generateAFlux_interval() {
+                                        // takes 5 value value in Duration type, in here 1 seconds
+                                        Flux<Long> intervalFlux = Flux.interval(Duration.ofSeconds(1)).take(5);
+                                        StepVerifier.create(intervalFlux).expectNext(1L, 2L, 3L, 4L, 5L);
+                                    }
+
+                1.4.2. Combining Reactive Types
+                    Bu baslikta Reactive tiplerin birlestirilmesi veya birden fazla reactive tiplere ayrilmasini inceleyecegiz.
+
+                    Merging Reactive Types 
+                        Iki tane Flux stream imiz olsun. Bunlarin merge edilmesi icin mergeWith method u kullanilir:
+
+                        @Test
+                        public void mergeFluxes() {
+                            Flux<String> characterFlux = Flux.just("Garfield", "Kojak", "Barbossa")
+                                    .delayElements(Duration.ofMillis(500));
+
+                            Flux<String> foodFlux = Flux.just("Lasagna", "Lollipops", "Apples")
+                                    .delaySubscription(Duration.ofMillis(250))
+                                    .delayElements(Duration.ofMillis(500));
+                            
+                            Flux<String> mergedFlux = characterFlux.mergeWith(foodFlux);
+
+                            StepVerifier.create(mergedFlux).expectNext("Garfield")
+                                    .expectNext("Lasagna")
+                                    .expectNext("Kojak")
+                                    .expectNext("Lollipops")
+                                    .expectNext("Barbossa")
+                                    .expectNext("Apples")
+                                    .verifyComplete();
+                        }
+
+                        Burada garip seyler oluyor. StepVerifier a bakalim: merge olan flux data da elemanlarin yerleri sirali degiller. characterFlux ile foodFlux in elemeanlari birbirlerine girmis durumdalar. Cunku;
+
+                        Flux.just method u kullanilirak, Flux in hemen emit ederek olusturulmasi saglanir. Ama delayElements method uyla emit edilecek elemanlar arasinda 500 milliseconds ara veriyoruz. Yani Garfield elemani 0. milliseconds da emit ediliyor, Kojat elemani 500. milliseconds da olusturuluyor.
+                            Garfield -> 500
+                            Kojak -> 1000
+                            Barbossa -> 1500
+
+                        foodFlux a gelince, delaySubscription method u ile ilk emmit islemi icin bekleme arasi veriyoruz:
+                            Lasagna -> 750
+                            Lollipops -> 1250
+                            Apples -> 1750
+                        
+                        emmit zamanlamasi ise iki flux elemani merge oldugunda baslamayacak. subscribe olundugunda baslayacak. Bu islemi StepVerifier.create method u yapacak.
+
+                        !!! o zaman just method lari bizim icin definition lari veriyor diyebiliriz. (merge asycn olarak )
+                            ayrica buradaki merge islemlerinin herbirisi farkli bir thread de yapiliyorlar. Yani flux elemanlarinin herbirisi bir thread de calistirilirlar. bu cikarimi ise log lardan ekde ediyorum. su eklemeyi yapinca log lama islemlerini gorebiliriz:
+                                Flux<String> mergedFlux = characterFlux.mergeWith(foodFlux).log();
+                            dikkat etmemiz gereken sey ise thread ler, flux in her bir elemani icin ayri ayri kosuyorlar. eleman bazli dusunmemiz lazim. elemanlarin emit edilmesine bagli. Burada flux icindeki elemanlarin siralari degismez ama.
+
+                        mergeWith ile birlestirme islemi yapilinca yeni bir Flux object i olusuyor. Ama bu object elemanlari hangi eski flux dan geldigini bilmiyoruz. 
+                        bir de zip method u ile birlestirme yapabiliriz. zip ile birleestirme yapildiktan sonra da yeni bir Flux object olusur. Ama bu object in icindeki elemanlar tuple dir. Her tuple iki object den olusur. Iki object in bir ilk flux dan ikicnisi ise ikinci flux dan olusur. bu sekilde yeni olusan flux object i uzerinde eski flux object lerini kullarak islem yapabiliriz.
+
+                            @Test
+                            public final void zipFluxes() {
+                                Flux<String> characterFlux = Flux.just("Garfield", "Kojak", "Barbossa");
+                                Flux<String> foodFlux = Flux.just("Lasagna", "Lollipops", "Apples");
+
+                                // zipping fluxes in a new flux, that has tuples whose first element is from first flux and second element is from second flux
+                                Flux<Tuple2<String, String>> zippedFluxes = Flux.zip(characterFlux, foodFlux);
+
+                                StepVerifier.create(zippedFluxes)
+                                        .expectNextMatches(predicate ->
+                                                predicate.getT1().equals("Garfield") && predicate.getT2().equals("Lasagna"))
+                                        .expectNextMatches(predicate ->
+                                                predicate.getT1().equals("Kojak") && predicate.getT2().equals("Lollipops"))
+                                        .expectNextMatches(predicate ->
+                                                predicate.getT1().equals("Barbossa") && predicate.getT2().equals("Apples"));
+
+                            }
+
+                        Zipped flux object i uzerinde islem yaparak yeni bir Flux object i olusturabiliriz:
+                        Bu sekilde yapildiginda yeni olusturulan Flux in elemanlari eski flux larin elemenalari kullanilarak olusuturulmus olacaktir.
+
+
+                            @Test
+                            public final void zipFluxes_creatingNewFlux() {
+                                Flux<String> characterFlux = Flux.just("Garfield", "Kojak", "Barbossa");
+                                Flux<String> foodFlux = Flux.just("Lasagna", "Lollipops", "Apples");
+
+                                // zipping fluxes in a new flux whose elements are the combination of two older Fluxes
+                                Flux<String> zippedFluxes = Flux.zip(characterFlux, foodFlux, (character, food) -> { return character + " eats " + food; } );
+
+                                StepVerifier.create(zippedFluxes)
+                                        .expectNext("Garfield eats Lasagna")
+                                        .expectNext("Kojak eats Lollipops")
+                                        .expectNext("Barbossa eats Apples");
+                            }
+
+                        fakrli uzunlukta elemanli olan Flux larin zipplendiginde kisa olanin uzunluguna gore yeni bir flux olusuturuluyor. arta kalan elemanlar ignor ediliyor. 
+
+                    Selecting the First Reactive Type to Publish
+                        Burada merge islemi yapmiyoruz. Elimizde iki tane flux var. bunlarin once hangisi publish edilirse o flux i isleme aliyoruz.
+
+                        @Test
+                        public void firstFlux() {
+                            Flux<String> slowFlux = Flux.just("tortoise", "snail", "sloth")
+                                    .delaySubscription(Duration.ofMillis(100));
+                            Flux<String> fastFlux = Flux.just("hare", "cheetah", "squirrel");
+
+                            // it takes the flux whose first element is taken. the finishing of emitting of all elements are not important
+                            Flux<String> firstFlux = Flux.first(slowFlux, fastFlux);
+
+                            StepVerifier.create(firstFlux)
+                                    .expectNext("hare")
+                                    .expectNext("cheetah")
+                                    .expectNext("squirrel")
+                                    .verifyComplete();
+                        }
+
+                        burada ilk calisacak olan fastFlux dir. O zaman onu isleme alacagizdir. Burada onemli olan ilk elemanin hangi flux dan gelmesidir. Yoksa emit isleminin son elemaninin bitmesi beklenmez.
+                        
+                1.4.3. Transforming and Filtering Reactive Streams
+                    Filtering data from reactive types:
+                        skip method
+                        bu method ile flux dan gelen ilk n elemani skip edebilirsin:
+                            @Test
+                            public void skipAFew() {
+                                Flux<String> skipFlux = Flux.just("one", "two", "skip a few", "ninety nine", "one hundred")
+                                        .skip(3); // skip first three elements
+                                StepVerifier.create(skipFlux)
+                                        .expectNext("ninety nine", "one hundred")
+                                        .verifyComplete();
+                            }
+
+                        ilk n tane item i degilde ilk 4 saniye icinde gelen item lari silmek isteyebilirisin:
+                        bu durumda skip method unu kullaniyoruz ama Duration ile kullaniyoruz.
+                            @Test
+                            public final void skipForDuration(){
+                                Flux<String> skipFlux = Flux.just("one", "two", "skip a few", "ninety nine", "one hundred")
+                                        .delayElements(Duration.ofSeconds(1))
+                                        .skip(Duration.ofSeconds(4));
+
+                                // in first second one is emitted. then two is emitted.
+                                StepVerifier.create(skipFlux).expectNext("ninety nine", "one hundred");
+                            }
+                        
+                        buradaki mantik ise ilk saniyede ilk eleman emit edillir. yani 
+                            1-> one 
+                            2-> two
+                            3-> skip a few --- buraya kadar olan skip edilir. 4. saniye deki alinir.
+                            4-> ninety nine
+                            5-> one hundred.
+
+                        skip isleminin tam tersi ile, take method u ile, de filter islemi yapilarabilir. ama sadece number of item sekilde calisir.
+
+                            @Test
+                            public final void filterWithTakeMethod(){
+                                Flux<String> nationalParkFlux = Flux.just("Yellowstone", "Yosemite", "Grand Canyon", "Zion", "Grand Teton")
+                                        .take(3);
+
+                                // in first second one is emitted. then two is emitted.
+                                StepVerifier.create(nationalParkFlux).expectNext("Yellowstone", "Yosemite", "Grand Canyon");
+                            }
+
+                        yine ayni sekilde take islemini zamana bagli olarak da yapabiliriz. Yani ilk 4 saniyedeki elemanlari donduren bir flux yazabiliriz.
+
+                            @Test
+                            public void filterWithTakeMethodByDuration() {
+                                Flux<String> nationalParkFlux = Flux.just("Yellowstone", "Yosemite", "Grand Canyon", "Zion", "Grand Teton")
+                                        .delayElements(Duration.ofSeconds(1))
+                                        .take(Duration.ofSeconds(4));
+
+                                StepVerifier.create(nationalParkFlux)
+                                        .expectNext("Yellowstone", "Yosemite", "Grand Canyon")
+                                        .verifyComplete();
+                            }
+
+                        burada 4 saniye oncesinde emit edilen elemanlari aldigimiz gorunuyor. 
+
+                        iki take islemini de goz onune alacak olursak, delay ile yapilan take isleminde tum emmit isleri farkli thread lerde yapildikarinin gordum. Ama delay olmayan take islemindeki emit ler bir tane thread de yapiliyorlar. 
+                        Buradan sunu cikarabilriz: delayElements method unda kullanilan islemlerde emit islemleri farkli thread lerde calistiriliyor. Bu da reactive programlamanin cozmek istedigi backpressure dir. Yani thread block lamadan zamanin gecmesinin saglanmasidir.
+
+                        filter method u ile ise emit edillen elemanlar icinde filter degerimize uyan elemanlari alabiliriz.
+                            @Test
+                            public final void filterMethod(){
+                                Flux<String> nationalParkFlux = Flux.just("Yellowstone", "Yosemite", "Grand Canyon", "Zion", "Grand Teton")
+                                        .filter(np-> !np.contains(" "));
+
+                                StepVerifier.create(nationalParkFlux)
+                                        .expectNext("Grand Canyon", "Grand Teton")
+                                        .verifyComplete();
+                            }
+                        burada icinde bosluk karakteri bulunduran elemanlar return edilicektir.
+
+                        flux icindeki elemanlardan birbirlerinden farkli olanlari dondurmek icin ise distinct method u kullnilir.
+
+                            @Test
+                            public final void distinctMethod(){
+                                Flux<String> animalFlux = Flux.just("dog", "cat", "bird", "dog", "bird", "anteater")
+                                        .distinct();
+                                
+                                StepVerifier.create(animalFlux)
+                                        .expectNext("dog", "cat", "bird", "anteater")
+                                        .verifyComplete();
+                            }
+                    
+                    Mapping Reactive Data
+                        Emit edilen degerleri baska bir tipe cevirmek ya da baska eklentiler etmek icin map ve flatMap method lari kullanilirlar. 
+                        Filter operation i, icine bir predicate alir. yani filtrelemek icin bir sarttir predicate. ama map de icine bir function alir ve bu function emit edilen elemanlari transform eder.
+                        
+                        map mehtod u yeni bir flux object i olusturur. 
+
+                            @Test
+                            public final void mapMethod() {
+                                Flux<Player> playerFlux = Flux.just("Michael Jordan", "Scottie Pippen", "Steve Kerr")
+                                        .map(player -> {
+                                            String[] split = player.split("\\s");
+                                            return new Player(split[0], split[1]);
+                                        });
+
+                                StepVerifier.create(playerFlux)
+                                        .expectNext(new Player("Michael", "Jordan"))
+                                        .expectNext(new Player("Scottie", "Pippen"))
+                                        .expectNext(new Player("Steve", "Kerr"))
+                                        .verifyComplete();
+                            }
+
+                        burada gorulecegi gibi ilk basta elimizdeki Flux in tipi String ken map den sonra Player flux ina evrilmesidir. Evrilmesi kelimesi tam olarak dogru degildir, cunku bu yeni bir Flux dir.
+                        Buradaki islem ise sync bir islemdir. Cunku String Flux emit ettikce map islemi yapilir. yani elemanlar String Flux daki sirasina gore emit edilirler. Emit edildikce de map lenirler.
+
+                        eger islemin async olarak yapilmasini istersek flatMap i kullanmamiz gerekecektir.
+
+                            @Test
+                            public final void flatMapMethod() {
+                                Flux<Player> playersFlux = Flux.just("Michael Jordan", "Scottie Pippen", "Steve Kerr")
+                                        .flatMap(playerFlux -> Mono.just(playerFlux)
+                                                .map(player -> {
+                                                    String[] splitValue = player.split("\\s");
+                                                    Player newPlayer = new Player(splitValue[0], splitValue[1]);
+                                                    // System.out.println(newPlayer);
+
+                                                    return newPlayer;
+                                                })
+                                                .subscribeOn(Schedulers.parallel())
+                                        );
+
+                                // this list is required since flatMap runs async way so there is no order
+                                List<Player> playerList = Arrays.asList( new Player("Michael", "Jordan"),
+                                        new Player("Scottie", "Pippen"),
+                                        new Player("Steve", "Kerr"));
+
+                                // all players should be included in playerList
+                                StepVerifier.create(playersFlux)
+                                        .expectNextMatches(player -> playerList.contains(player))
+                                        .expectNextMatches(player -> playerList.contains(player))
+                                        .expectNextMatches(player -> playerList.contains(player))
+                                        .verifyComplete();
+                            }
+
+                        burada islem biraz daha karmasik. multi-thread olarak calistigindan cok daha performansli islem yapilir.
+                        Elimizde bir tane String Flux var. bunu flatMap ile transform edecegiz. flatMap icine bir flux function i alir. bu function in tipi Mono da olabilir. Cunku bizim senaryomuzda her bir eleman bir tane object oldugundan sorun yok.
+                        Yapacagimiz is, flatMap in bize sagladigi flux i Mono yaparak onu map lememiz. Ve bu map i paralel olarak calistirmaktir. Onun icin ise subscribeOn method u map den sonra kullanilir.
+                        Aklimiza su soru geliyor, flatMap kullanmadan da subscribeOn ile islemi paralel yapabilmemiz gerekir. Ama yapamiyoruz. Neden? 
+                        Yapamiyorsak subscribeOn method unu calisir kilan sey in flatMap olmasi aklima geliyor.
+
+                        Bu subscribeOn icine parllel yerine baska static method lar da kullanabiliriz: 
+                            .immediate() -> current thread ile calistir.
+                            .single() -> yeni bir tane thread icinde tum call lari calistir.
+                            .newSingle() -> herbir call i farkli bir thread icinde calistir
+                            .elastic() -> bir pool icindeki thread lerde calistir. eger pool da yeteri kadat thread yoksa olusturur.
+                            .parallel() -> farkli thread lerde calistir. 
+                        
+                        Bu sekilde flux icindeki islemleri paralel thread lerde yapmis oluruz.
+
+                        BU sekilde islem yapmanin bir problemi ise islenilen flux elemanlarinin siralarinin kestirilemez olamsidir. cunku her bir islem farkli thread de yapilir. bu yuzden StepVerifier da expectNext i kullanamayiz. 
+
+                    Buffering Data On A Reactive Stream
+                        Gelen flux icindeki elemanlari birlestirmek icin kullanicagiz. Mesela ilk uc eleman bir buffer olacak. Diger uc eleman baska bir buffer olacak. 
+                        Bu durumda buffer olacak eleman larin tipi bir collection olabilir. Ya da kendimizin olusturacagi baska bir tip de olabilir.
+
+                            @Test
+                            public final void bufferMethod() {
+                                Flux<String> fruitFlux = Flux.just("apple", "orange", "banana", "kiwi", "strawberry");
+
+                                Flux<List<String>> bufferedFlux = fruitFlux.buffer(3);
+
+                                StepVerifier.create(bufferedFlux)
+                                        .expectNext(Arrays.asList("apple", "orange", "banana"))
+                                        .expectNext(Arrays.asList("kiwi", "strawberry"))
+                                        .verifyComplete();
+                            }
+
+                        -- yukaridaki durumu ele alacak olursak, buffer olusturduktan sonra olusacak elemani flatMap ile paralel thread de calistirabilmemiz gerekir.
+                        bunu implement eden bir code:
+
+                            @Test
+                            public final void bufferMethodAsync() {
+                                Flux<String> fruitFlux = Flux.just("apple", "orange", "banana", "kiwi", "strawberry");
+
+                                Flux<String> bufferedFlux = fruitFlux
+                                        .buffer(3)
+                                        .flatMap(thirdlyFruitList -> Flux.fromIterable(thirdlyFruitList)
+                                                .map(fruitName -> fruitName.toUpperCase())
+                                                .subscribeOn(Schedulers.parallel())
+                                                .log()
+                                        );
+
+                                List<String> fruitBuffer = Arrays.asList("APPLE", "ORANGE", "BANANA", "KIWI", "STRAWBERRY");
+
+                                StepVerifier.create(bufferedFlux)
+                                        .expectNextMatches(fruit -> fruitBuffer.contains(fruit))
+                                        .expectNextMatches(fruit -> fruitBuffer.contains(fruit))
+                                        .expectNextMatches(fruit -> fruitBuffer.contains(fruit))
+                                        .expectNextMatches(fruit -> fruitBuffer.contains(fruit))
+                                        .expectNextMatches(fruit -> fruitBuffer.contains(fruit))
+                                        .verifyComplete();
+                            }
+
+                        simdi bu kodu inceleyelim:
+                            ilk olarak elimizde bir string flux var.
+                            sonrasinda bu flux i buffer layarak elemanlari List<String> tipinde bir flux olusturduk.
+                            sonra olusan flux a flatMap method unu uyguladik
+                            List<String> flux elemanlarinin herbiri icin paralel thread de calisacak sekilde islenmesini tanimladik. ve islem olarak da icine her bir elemaninin uppercase e cevirilmesini sagladik.
+                            burada paralel calisan seyler List<String> flux i icindeki elemanlardir. List<String> elemanlarinin uppercase e cevirilmes islemleri sync dir. Soyle dusunelim. ilk uc eleman bir thread de uppercase e cevirilecek ikinci uc eleman ise baska bir thread de uppercase e donusuturulecek. iki thread in de start zamanlari ayni. o yuzden yeni olusacak flux daki elemanlarin siralarini tam olarak kestiremeyiz ama buffer icindeki elemanlarin siralari bozulmaz. Sadece aralarina diger buffer dan elemanlar girebilir.
+
+                            mesela : kiwi, apple, orange, strawberry, banana seklinde gelebilir. 
+                            bunlardan apple, orange ve banana ayni thread de islenirler, kiwi ve strawberry ayni thread de islenirler. 
+
+                            buradaki log method u ise application a tanimlanan logger uzerinde calisarak flux islemlerini log larlar.
+                        
+                        Gelen tum elemanlari bir flux a almak icin:
+                            @Test
+                            public final void bufferMethodInAFlux() {
+                                Flux<String> fruitFlux = Flux.just("apple", "orange", "banana", "kiwi", "strawberry");
+
+                                Flux<List<String>> bufferedFlux = fruitFlux.buffer();
+
+                                StepVerifier.create(bufferedFlux)
+                                        .expectNext(Arrays.asList("apple", "orange", "banana", "kiwi", "strawberry"))
+                                        .verifyComplete();
+                            }
+                            Yani tum elemanlar bir tane List<String> object i icine alinan bir Flux olusturulmustur.
+
+                        Mantiksal olarak tek elemanli olarak kullanilan Flux degil Mono olmalidir. O zaman collectList() method unu kullanmak daha uygun olacaktir:
+                            @Test
+                            public final void collectListMethod() {
+                                Flux<String> fruitFlux = Flux.just("apple", "orange", "banana", "kiwi", "strawberry");
+
+                                Mono<List<String>> bufferedFlux = fruitFlux.collectList();
+
+                                StepVerifier.create(bufferedFlux)
+                                        .expectNext(Arrays.asList("apple", "orange", "banana", "kiwi", "strawberry"))
+                                        .verifyComplete();
+                            }
+                        
+                        collectMap method u ile verilen elemanlari bir map flux i icinde tutabiliriz. burada flux icinde tutulacak map in key ini belirlemek icin bir function functional interface i yazacagiz.
+
+                1.4.4. Performing logic operations on reactive types
+                    Bir flux icindeki elemanlarin bir kosulu saglayip saglamamasi icin kullanilir.
+
+                    all() method u tum elemanlarin bir kosulu saglayip saglamadigini doner,
+                    any() method u ise en az bir elemaninin bu kosulu saglayip saglamadigini soyler.
+
+                    all method u icin test:
+                        @Test
+                        public final void allMethod() {
+                            Flux<String> animalFlux = Flux.just("aardvark", "elephant", "koala", "eagle", "kangaroo");
+
+                            Mono<Boolean> hasAMono = animalFlux.all(animalName -> animalName.contains("a"));
+
+                            StepVerifier.create(hasAMono).expectNext(Boolean.TRUE).verifyComplete();
+
+
+                            Mono<Boolean> hasKMono = animalFlux.all(animalName -> animalName.contains("k"));
+
+                            StepVerifier.create(hasKMono).expectNext(false).verifyComplete();
+                        }
+                    
+                    any method u icin test:
+                        @Test
+                        public final void anyMethod() {
+                            Flux<String> animalFlux = Flux.just("aardvark", "elephant", "koala", "eagle", "kangaroo");
+
+                            Mono<Boolean> hasOMono = animalFlux.any(animalName -> animalName.contains("o"));
+
+                            StepVerifier.create(hasOMono).expectNext(Boolean.TRUE).verifyComplete();
+
+
+                            Mono<Boolean> hasZMono = animalFlux.any(animalName -> animalName.contains("z"));
+
+                            StepVerifier.create(hasZMono).expectNext(false).verifyComplete();
+                        }
+                    
+
+
+
+
+
+
+                        
+
+
+
+                            
+
+                        
+
+
+
+
+
+
+
 
 
 
