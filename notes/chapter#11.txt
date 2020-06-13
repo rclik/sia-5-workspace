@@ -1,0 +1,615 @@
+Bu chapter da onceki chapter dan ogrendirimiz Project Reactor un SpringMVC ile nasil kullanilacagini gorecegiz.
+
+Spring in reactive programlama framework unun ismi Spring WebFlux dir.
+
+11.1. Working With Spring WebFlux
+    Normal de bir web application server a gelen bir request bir thread tarafindan handle edilir. Bu request sonlaninyaca kadar bu thread uzerinde calistirilir. Ama bazi noktalarda thread sadece baska islemleri bekler. Bu da dusundugumuz gibi, thread in bosuna block lanmasi anlamina gelir ki bu istenilen bir durum degildir. 
+
+    Eski uygulama cogu senaryoda hala gecerlidir. Ama cok fazla request alan uygulamalarda, bu bazen thread leri cok kullanicagindan kaynaklar efektif olarak kullanilamaz. Ve sorunlar ortaya cikabilir.
+
+    IoT dunyasinda makineler web server lara API uzerinden konustuklarindan ve bu makinelerin cok olmasi ve her zaman bu API ler uzerinden iletisime gecmleri web sunucularinin daha effective calismalarini gerektirir. bu durumda eski yontemden farkli olarka thread leri daha effective kullanan mimariler gelistirilmesi gerekir.
+
+    Bu API lere Async API ler denir. Daha az thread ile daha fazla olceklenebilirlik saglar. (achieve higher scalability with fewer threads—generally one per CPU core)
+
+    Event Looping denilen bir teknik ile Async api lar tasarlanabilir:
+
+        client1 |- request ->                 |- push request event -> |            | - register callback           -> |    
+        client2 |- request -> Request Handler |                        | Event Loop |                                  | operations
+        client3 |- request ->                 |<- trigger callback  -- |            | <- push operation complete event | 
+
+    buradaki event loop bir thread pool unda calisir. Ama thread pool undaki thread sayisi makinenin cpu core sayisi kadar olmalidir.
+
+    BU mimari thread leri daha effective kullandigindan resource management isi daha verimli olacaktir. bu da yogun istek hacimlerinde daha iyi performans verecektir.
+
+    Spring non-blocking, async web framework olarka Spring WebFlux i ortaya koydu. Bunun arka planinda ise bir onceki chapter da gordugumuz project reactor var.
+
+    11.1.1. Introducing Spring WebFlux
+        iki ayri project olarak spring de bulunan spring WebFlux ve spring MVC aslinda bir project olarak da kullanilabilirdir. Ama if statement lar ile ugrasilmamasi icin ikisi de ayri tutuldu. Spring WebFlux ise Spring MVC nin ortak oldugu alanlari aldi.
+
+        yapi olarak su sekilde:
+
+            spring mvc    | |   spring WebFlux
+        @Controller @RequestMapping  router functions
+        SpringMVC         | | Spring WebFlux  
+        Servlet API       | | Reactive HTTP
+        Servlet Container | | Tomcat, Jetty, Netty, Undertow, Any Servlet 3.1 implementation
+
+        yani spring mvc servlet container uzerine bir servlet api uzerinden gelisitirlmistir. ama spring WebFlux servlet container gerektirmez, onun yerine reactive http kullanan application server lari kullanilir. controller ve RequestMapping gibi ortak kullanilan annotation lar vardir.
+
+        Eklenecek dependencty 
+            <dependency> 
+                <groupId>org.springframework.boot</groupId> 
+                <artifactId>spring-boot-starter-webflux</artifactId>
+            </dependency>
+        
+        SpringMVC ye gore degisiklik ise default application server in Netty olmasidir. Cunku Netty async, event-driven server dir. 
+
+        Bir de artik controller larimiz domain class lari kabul etmezler. Flux veya Mono tipinde olmalari gerekir. Ayrica JavaRx type larini (Observable, Single, and Completable) da kabul ederler. Cunku bunlar framework bu iki reactive uygulamayo birbirlerine cevirilebilirler. 
+
+    11.1.2. Writing Reactive Controllers
+        Spring Web dependency sini kaldirip yerine webflux dependency sini koyduk.
+        Sonra yapacagimiz ilk is, DesignTacoController daki Iterable<Taco> donen getRecentTacos methodunun Flux<Taco> donecegini yazmak.
+        Bunun icin service ve controller method larinin signature larini degistirmemiz gerekir.
+
+            @GetMapping(path = "/recent")
+            public final Flux<Taco> getRecentTacos() {
+                log.debug("[getRecentTacos] first page is requested");
+                return tacoService.getTacos();
+            }
+
+            @Override
+            public Flux<Taco> getTacos() {
+                Flux<Taco> tacoFlux = Flux.fromIterable(tacoRepository.findAll()).take(pageSize);
+                return tacoFlux;
+            }
+        
+        Bir farki, bu su anda pageable bir request degildir. Ona sonra bakariz.
+
+        Bu islemleri yaptiktan sonra bir hata aldim. Hata ise:
+            JSON encoding error: failed to lazily initialize a collection of role...
+        Diye uzuyordu. Arastirinca gordum ki, Hibernate deki bir sorunmus. Aslinda sorun degil de sanirim hibernate database reference larinin EAGER seklinde olmasini gerektiriyor.
+        Ben de Taco class indaki Ingredient reference ina fetch parametresini ekledim:
+
+            @ManyToMany(targetEntity = Ingredient.class, fetch = FetchType.EAGER)
+            @Size(min = 1, message = "A taco should have at least one ingredient")
+            private List<Ingredient> ingredients;
+
+        Bu sekilde hata almadim. 
+
+        Bu arada fetch lerde bir EAGER bir de LAZY var. Bunlar sirasiyla, eger referenced object in herbir ana object request inde load olmasini istersen EAGER kullanman lazimken referenced object in sadece ana objectin getReferncedType method u cagirildiginda load olmasini istersen LAZY yi kullanman gerekir. default olarak LAZY dir. Sanirim WebFlux LAZY loading reference loading i desteklemiyor.
+
+        su link incelenebilir:
+        https://stackoverflow.com/questions/54665983/spring-data-jpa-yet-another-lazyinitializationexception-issue
+
+        Ya da tamamen reactive olarak yapalim, yani database islemlerini de reactive olarak yapalim. Onun icin ReactiveCrudRepository class ini kullanicagiz. 
+        Ama dur dur dur! JDBC non-blocking app islemlerini desteklemiyor. Bir kutuphane eklememiz lazim. Ya da MongoDB gibi database ler kullanmamiz lazim.
+        JDBC nin reactive olarak calismasi icin de  soyle bir yontem var:
+            https://github.com/chang-chao/spring-webflux-async-jdbc-sample
+        Burada Mono ve Flux in method larini kullanarak, database den alinan query response larini guncelliyorlar. 
+
+        Tek bir taco almak icin sunu yaziyoruz:
+
+            @Override
+            public Mono<Taco> getTaco(Long id) {
+                Optional<Taco> taco = tacoRepository.findById(id);
+                return taco.map(Mono::just).orElseGet(Mono::empty);
+            }
+
+            Burada Optional in guzel bir kullanimi var. Optional.map
+            Optional present ise map le, yoksa get yap.
+        
+        Working With JavaRx Types
+            Project Reactor type lari olan Mono vd Flux yerine JavaRx type lari olan Observable, Single ve Completable i kullanabiliriz.
+            Iki durumda da ayni calisir. Iki kutuphane tipleri birbirlerine cevirilebilirler.
+
+            @GetMapping("/recent")
+            public Observable<Taco> recentTacos() {
+                return tacoService.getRecentTacos();
+            }
+
+            @GetMapping("/{id}")
+            public Single<Taco> tacoById(@PathVariable("id") Long id) {
+                return tacoService.lookupTaco(id);
+            }
+
+            Yani Single Mono nun yerine Observable ise Flux in yerine kullanilabilir. Ayni sekilde biri birden fazla elemani emit ederken digeri sadece bir eleman emit eder.
+
+            Mono<Void> in yerine Completable kullanilabilir. Ve yine Flowable yerine Flux kullanilabilir.
+
+            -- bunlarin arasindaki farkliliklari arastirmak lazim.
+
+        HANDLING INPUT REACTIVELY
+            Soyle dusunelim, bir tane POST request imiz var, bu post request i de bir request body den bir entity alarak onu database e save edecek. Bu durumda, request body ini resolve olmasi icin gecen bir sure var, bir de database e save edilmesi icin gececek bir sure var.
+            Bu iki sure de normal sartlar altinda thread leri daha az effective sekilde kullanmamizi saglar. Bu iki sureden de kurtulmamiz icin WebFlux i kullanabilriz.
+            Yapacagimiz is:
+                @PostMapping(consumes = "application/json")
+                public final Mono<Taco> saveTaco(@RequestBody Mono<Taco> tacoMono) {
+                    return tacoService.addTaco(tacoMono);
+                }
+            Taco nun bu sekilde eklenmesini saglamak, ama su anda tam olarak reactive calismaya uygun olmayan bir database kullandigimiz icin cok da verimli calisamiyoruz, cunku database in de direk olarak reactive sekilde Reactor object lerini almasini bekleriz.
+
+            Database de flux method larini kullanmaya calistigimizda su hatayi aliyoruz:
+                Reactive Repositories are not supported by JPA.
+            Yani biraz zorlama islemler yapmak gerekiyor.
+            
+            https://dzone.com/articles/spring-webflux-a-basic-crud-application-part-1
+
+11.2. Defining Functional Request Handlers
+    Spring 5 ile WebFlux a yeni bir programlama yontemi getirildi. Bunun nedeni annotation larla cok ugrasilamamasi. Onun yerine functional programming yaklasiminin kullanilmasidir. 
+    Bu yaklasimda, annotation larin yerine functional interface ler ve method lar kullanilir. Su 4 lu yeni modelin primary tipleridir:
+    - RequestPredicate : hangi tip request lerin handle edilecegini soylemek icin kullanilir
+    - RouterFunction : Hangi request hangi method da route edilecek, cunku o method da handle edilecek
+    - ServletRequest : http servlet request, request in header veya body vb. bilgilerine ulasmak veya update etmek icin.
+    - ServletResponse : http servlet response, response in header veya body vb. bilgilerine ulasmak veya update etmek icin.
+
+    Cok basit bir ornek uzerinden ise koyulalim:
+
+        import org.springframework.context.annotation.Bean;
+        import org.springframework.context.annotation.Configuration;
+        import org.springframework.web.reactive.function.server.RequestPredicates;
+        import org.springframework.web.reactive.function.server.RouterFunction;
+        import org.springframework.web.reactive.function.server.RouterFunctions;
+        import org.springframework.web.reactive.function.server.ServerResponse;
+        import reactor.core.publisher.Mono;
+
+        @Configuration
+        public class RouterFunctionConfig {
+
+            @Bean
+            public RouterFunction<?> helloRouterFunction(){
+                return RouterFunctions.route(
+                        RequestPredicates.GET("/hello"),
+                        serverRequest -> ServerResponse.ok().body(Mono.just("Hello functional World!"), String.class)
+                );
+            }
+        }
+
+
+        Ilk olarak yapmamiz gereken bir Configuration sinifi olusturmak. Ve bu sinifin icine @Bean annotation i ile, SAC a bir bean olusturmasini soylemek.
+
+        Bu bean inimiz bir RouterFunction tipinde olacak. Simdi RouterFunction object imizi olusturalim. Birinci adim olarak, RouterFunction in static router method unu kullanarak bir route olusturmak.
+        Bu route mehtod u icine iki tane parametre aliyor. ilki RequestPredicate ikincisi ise bir Function<ServletRequest, ServerResponse> functional interface i. (yani ServletRequest input u aliyor, ServletResponse return ediyor. remember!!!)
+        RequestPredicate kismi handler kisminin hangi request ler icin calisacagini soyluyoruz, handler kisminda ise malum response olusturuyoruz.
+            - "/hello" path ine gelen HTTP GET method lari icin 
+            - handler kisminda ise, ServerResponse dan bir 200 OK, olusuruyoruz. sonra 200 OK in body sine bir Reactive type object koyuyoruz. Cunku body nin olusturulmasi icin de back pressure indan da kurtulmamiz lazim. Ayrica response icerigi icin de bir class tipi koyuyoruz.
+
+        Burada dikkat etmemiz gereken olusturulan response bir json degildir. Cunku String olarak donduk. Yani response un header i application/json degil 
+        Handler kismini lambda expression yerine bir method reference ile de yapabilirdik. Daha anlasilir olmasi acisindan daha iyi olabilir.
+        
+        Bir ikinci route yazmak icin yeni bir tane RouterFunction.andRoute() method u kullanilarak yeni bir route tanimlanabilir. Daha az code yazmak icin daha iyi bir secenek.
+
+            @Bean
+            public RouterFunction<?> helloRouterFunction(){
+                return RouterFunctions.route(
+                        RequestPredicates.GET("/hello"),
+                        serverRequest -> ServerResponse.ok().body(Mono.just("Hello functional World!"), String.class)
+                ).andRoute(
+                        RequestPredicates.GET("/bye"),
+                        serverRequest -> ServerResponse.ok().body(Mono.just("See ya!"), String.class)
+                );
+            }
+
+        Cok basit bir sekilde bye endpoint ini de anlamis olduk.
+
+        Simdi taco uygulamasinda daha guzel sekilde bunlari uygulayalim.
+                @Bean
+                public  RouterFunction<?> tacoRouterFunction(){
+                    return RouterFunctions.route(
+                            RequestPredicates.GET("/design/recent"),
+                            this::recants
+                    ).andRoute(
+                        RouterFunctions.route(
+                            RequestPredicates.GET("/design/recent"),
+                            this::recants
+                            );
+                }
+
+                private Mono<ServerResponse> recants(ServerRequest serverRequest) {
+                    return ServerResponse.ok().body(
+                            tacoService.getTacos().take(pageSize),
+                            Taco.class);
+                }
+
+                private Mono<ServerResponse> postTaco(ServerRequest serverRequest) {
+                    Mono<Taco> tacoMono = serverRequest.bodyToMono(Taco.class);
+                    Mono<Taco> savedTacoMono = tacoService.addTaco(tacoMono);
+                    return ServerResponse.ok().body(savedTacoMono, Taco.class);
+                }
+
+        Yaptigmiz is ilk ornek ile neredeyse ayni, sadece mehtod reference i router method undaki handler olarak atadik
+        Method reference in return tipi ise Mono<ServerResponse> aldigi parametre ise ServerRequest.
+
+11.3. Testing Reactive Components
+    Spring in sundugu WebTestClient class i reactive component leri test etmemiz icin kullanilir.
+
+    11.3.1. Testing GET Request
+        Test yazarken eski mantikla devam ediyoruz. Bir  farklilik yok. 
+
+            @Test
+            public final void test_shouldReturnRecentTacos(){
+                // ilk olarak test de mock layacagimiz data yi olusturuyoruz.
+                Taco[] tacos = {
+                        testTaco(1L), testTaco(2L),
+                        testTaco(3L), testTaco(4L),
+                        testTaco(5L), testTaco(6L),
+                        testTaco(7L), testTaco(8L),
+                        testTaco(9L), testTaco(10L),
+                        testTaco(11L), testTaco(12L),
+                        testTaco(13L), testTaco(14L),
+                        testTaco(15L), testTaco(16L)};
+                Flux<Taco> tacoFlux = Flux.fromArray(tacos);
+
+                // mock layacagimiz object de olusturduktan sonra
+                TacoService tacoService = Mockito.mock(TacoService.class);
+
+                // su method call edildiginde bu response donecek diyoruz. mock object tamam
+                Mockito.when(tacoService.getTacos()).thenReturn(tacoFlux);
+
+                // WebTestClient ile test edecegimiz object i olusturyoruz ve icine kullandigi mock object ini veriyoruz.
+                WebTestClient testClient = WebTestClient.bindToRouterFunction(
+                        new RouterFunctionConfig(tacoService).tacoRouterFunction()
+                ).build();
+
+                // test time !!!
+                testClient.get().uri("/design/recent")
+                        .accept(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
+                        .exchange()
+                        .expectStatus().isOk()
+                        .expectHeader().contentType(MediaType.APPLICATION_JSON)
+                        .expectBody()
+                        .jsonPath("$").isArray()
+                        .jsonPath("$").isNotEmpty()
+                        .jsonPath("$[0].name").isEqualTo("Taco 1")
+                        .jsonPath("$[0].id").isEqualTo(tacos[0].getId().toString())
+                        .jsonPath("$[1].name").isEqualTo("Taco 2")
+                        .jsonPath("$[1].id").isEqualTo(tacos[1].getId().toString())
+                        .jsonPath("$[2].name").isEqualTo(tacos[2].getName())
+                        .jsonPath("$[2].id").isEqualTo(tacos[2].getId().toString())
+                        .jsonPath("$[17]").doesNotExist();
+            }
+
+            Eger response taco json i cok karmasik ise, jsonPath method lari cok karmasik olacaktir. Bu durumda ise response u bir json olarak bir ile a yazip, sonra da onu o file dan okuyabilirsin. Sonra ise test den donen response body ile eslestirebilirsin:
+                ClassPathResource recentTacosJsonResource = new ClassPathResource("taco/recent-tacos.json");
+                String recentTacosJson = StreamUtils.copyToString(
+                        recentTacosJsonResource.getInputStream(),
+                        Charset.defaultCharset());
+
+                testClient.get().uri("/design/recent")
+                        .accept(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
+                        .exchange()
+                        .expectStatus().isOk()
+                        .expectHeader().contentType(MediaType.APPLICATION_JSON)
+                        .expectBody()
+                        .json(recentTacosJson);
+            
+            Bu kadar. Ilk olarak file i spring uzerinden resource olarak okuduk.
+            Bir de compare method umuz var. Bu method ise donen response json unda o json dan var m i diye bakar.
+
+                testClient.get().uri("/design/recent")
+                    .accept(MediaType.APPLICATION_JSON)
+                    .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
+                    .exchange()
+                    .expectStatus().isOk()
+                    .expectBodyList(Taco.class)
+                    .contains(Arrays.copyOf(tacos, 16));
+
+    11.3.2. Testing POST Request
+        @Test
+        public void shouldSaveATaco() {
+            TacoRepository tacoRepo = Mockito.mock( TacoRepository.class);
+            Mono<Taco> unsavedTacoMono = Mono.just(testTaco(null)); 
+
+            Taco savedTaco = testTaco(null);
+            savedTaco.setId(1L);
+            Mono<Taco> savedTacoMono = Mono.just(savedTaco);
+
+            when(tacoRepo.save(any())).thenReturn(savedTacoMono);
+
+            WebTestClient testClient = WebTestClient.bindToController( 
+                new DesignTacoController(tacoRepo)
+            ).build();
+
+            testClient.post().uri("/design")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(unsavedTacoMono, Taco.class) 
+                .exchange() 
+                .expectStatus()
+                .isCreated()
+                .expectBody(Taco.class)
+                .isEqualTo(savedTaco);
+        }
+
+        Hersey cok acik.
+
+    11.3.3. Testing with Live Server
+        Simdiye kadar bir method u test ederken method un kullandigi diger variable lari mock ladik. Ama calisan bir service i de test etme ihtiyaci duyabiliriz. Yani tam olarak service in interaction icinde oldugu tum variable lari mock lamadan, real time da calisirmiscasina test edebiliriz. Buna integration test denir.
+        Bu durumda spring application imizin calismasi lazim. O zaman test method umuza bu durumu belirtmek icin annotation lar eklememiz lazim:
+            @RunWith and @SpringBootTest
+
+            @RunWith(SpringRunner.class) 
+            @SpringBootTest(webEnvironment=WebEnvironment.RANDOM_PORT) 
+            public class DesignTacoControllerWebTest {
+                @Autowired
+                private WebTestClient testClient;
+            }
+        
+        Random port da verdik ki, sistemde bos olan bir port bulup, application imiz o port uzerinden ayaga kaldirilsin. Istersek sabit bir port da verebiliriz. Ama kullaniliyorsa sorun cikaracagindan bu sekilde kullanilmasi tavsiye edilir.
+
+        Burada anlasilacagi gibi, WebTestClient i inject ediyoruz ve spring auto-configuration bunu biliyor, ve ona gore testClient imizi initialize edecek. Hangi server da calisacagini vb. bilgileri otomatik olarak girecek.
+
+            @RunWith(SpringRunner.class)
+            @SpringBootTest
+            @AutoConfigureWebTestClient
+            @ActiveProfiles("fReactive")
+            public class DesignTacoControllerIntegrationTest {
+                @Autowired
+                private WebTestClient webTestClient;
+
+                @Test
+                public void shouldReturnRecentTacos() {
+                    webTestClient.get().uri("/design/recent").accept(MediaType.APPLICATION_JSON).exchange()
+                            .expectStatus().isOk()
+                            .expectBody()
+                            .jsonPath("$").isArray()
+                            .jsonPath("$").isNotEmpty()
+                            .jsonPath("$[0].name").isEqualTo("Carnivore")
+                            .jsonPath("$[0].id").isEqualTo("1")
+                            .jsonPath("$[1].name").isEqualTo("Bovine Bounty")
+                            .jsonPath("$[1].id").isEqualTo("2")
+                            .jsonPath("$[3]").doesNotExist();
+                }
+            }
+
+11.4. Consuming REST APIs Reactively 
+    Chapter-7 de rest api leri test etmek icin spring in sundugu RestTemplate client object i uzerinden api mizi test etmistik. Ama bu client object, reactive programming i desteklemiyor.
+    Reactive programming destekleyen bir client, request body sine ve gelen response unu body sini reactive type olarak alir. Bu sekilde onlarin olusturulmasi veya cozumlenmesi icin gecen zamanlardan kurtulmus olur. Kendisinin reactive olmasiyla ise network den yasanan suruncemelerden sistemini yormaz.
+
+    Spring-5 is reactive programming desteleyen bir client object i sundu. WebClient ve genel olarak su pattern kullanilarak isleme alinabilir. (hepsinde oldugu gibi)
+        - create an instance 
+        - specify http method
+        - specify URI, headers 
+        - submit the request
+        - consume the response
+
+    WebClient object ini inject ediyoruz.
+    
+    11.4.1. GET ting resources
+        Mono<Ingredient> ingredient = WebClient.create()
+                                                .get()
+                                                .uri("http://localhost:8080/ingredients/{id}", ingredientId) 
+                                                .retrieve()
+                                                .bodyToMono(Ingredient.class);
+        ingredient.subscribe(i -> { ... });
+        
+        Koddan da anlasilacagi gibi, ingredients URI ina ingredientId sini verdigimiz bir GET request i yapiyoruz. Gelen response u da Ingredient class ina serialize ediyoruz.
+        Sonra response uzerine islem yapmak icin subscribe oluyoruz. islemlerimizi yapiyoruz. Oncesinde tabi ki map ler split ler ne yapmak istiyorsak reactive programming in sundugu method lar ile gelen data mizi manipulate edebiliriz.
+
+        Response json da tek bir object olacagini bildigimiz icin Mono kullandik. Ama birden fazla object varsa Flux i kullanmamiz lazim.
+
+        Flux<Ingredient> ingredients = WebClient.create()
+                                                .get()
+                                                .uri("http://localhost:8080/ingredients") 
+                                                .retrieve()
+                                                .bodyToFlux(Ingredient.class);
+        ingredients.subscribe(i -> { ... });
+
+        Mantik ise yukardaki ile birebir ayni.
+
+        Making Requests with a Base URI 
+            bir client icin kullandigimiz api lerin common bir URI si vardir. "http://localhost:8080" gibi. Bunu tekrar tekrar yazamaktansa, bizim autowire ettigimiz WebClient object imizi o sekilde create edebiliriz.
+
+            @Bean
+            public WebClient webClient() {
+                return WebClient.create("http://localhost:8080");
+            }
+
+            Bu kullanimi daha once de gordun. Bir tane bean olsuturarak, webClient object imizini o sekilde create edebiliriz. 
+
+            O zaman kodumuz su sekilde olacak;
+
+                // bu islemi herhangi bir class da yapabilirisin
+                @Bean
+                public WebClient webClient() {
+                    return WebClient.create("http://localhost:8080");
+                }
+
+                @Autowired
+                WebClient webClient;
+
+                public Mono<Ingredient> getIngredientById(String ingredientId) {
+                    Mono<Ingredient> ingredient = webClient.get()
+                                                            .uri("/ingredients/{id}", ingredientId)
+                                                            .retrieve()
+                                                            .bodyToMono(Ingredient.class);
+                    return ingredient;
+                }
+        
+        TIMING OUT LONG-RUNNING REQUESTS
+            Bazen server daki bir sorundan dolayi ya da network deki bir problemden dolayi attiginiz request istenilen zamanda donmez. Bunu bilip, client imizin cok zaman harcamamasi icin, timeout verebiliriz.
+
+            Timeout isini subscribe den hemen reactive type object ine vermemiz gerekiyor. Soyle:
+
+            Flux<Ingredient> ingredients = WebClient.create()
+                                                    .get()
+                                                    .uri("/ingredients")
+                                                    .retrieve()
+                                                    .bodyToFlux(Ingredient.class);
+            
+            ingredients
+                .timeout(Duration.seconds(1))
+                .subscribe(
+                    ingredients -> {},
+                    error -> {}
+                );
+            
+            Eger bir timeout problemi olursa error kismina dusecektir.
+
+    11.4.2. Sending Resources
+        Request in body sinde resource gondermek icin de reactive type lari kullanmamiz, onlarin olusturulurken gececek zamanda thread lerin block lanmasini engelleyecektir.
+
+        Mono<Ingredient> ingredientMono = ...;
+
+        Mono<Ingredient> result = WebClient.create().
+                                            .post().
+                                            .uri("/ingredients")
+                                            .body(ingredientMono, Ingredient.class)
+                                            .retrieve()
+                                            .bodyToMono(Ingredient.class);
+        
+        result.subscribe(
+            ingredient -> {}
+        );
+
+        Eger reactive type bir object gondermek istemiyorsan degistirmen gereken teksey;
+            .body(ingredientMono, Ingredient.class) yerine syncBody(ingredient) method unu kullanmak.
+
+    11.4.3. Deleting Resources
+        sadece delete method unu kullanmak gerekiyor. bir de donen responce json bir object olmayacagi icin, dikkat etmek gereken birsey daha var. 
+
+        Mono<Void> result = webClient
+                                .delete()
+                                .uri("/ingredients/{id}", ingredientId) .retrieve()
+                                .bodyToMono(Void.class)
+                                .subscribe();
+        
+        Void.class kullaniyoruz, sadece o kadar.
+
+    11.4.4. Handling Errors
+        WebClient i kullanirken, 1xx, 2xx ve 3xx return code lari subscribe method unun success ine duserken, 4xx ve 5xx ler error method una duserler. Error lari handle etmek icin ise subscribe in error method kismini kulanabiliriz.
+        Ornek olarak;
+            Mono<Ingredient> ingredientMono = webClient 
+                                                .get()
+                                                .uri("http://localhost:8080/ingredients/{id}", ingredientId)
+                                                .retrieve()
+                                                .bodyToMono(Ingredient.class);
+            ingredientMono.subscribe(
+                ingredient -> {},
+                error -> {}
+            );
+
+        soyle dusunelim, attigimiz id de bir ingredient yok. server da buna 404 not found donuyor. bu durumda bizim error method umuz calisacaktir. burada bir sorunumuz var. error kisina dusen her error case inde atilan, ve bizim tarafimizsan da tutulan Exception aynidir (WebClientResponseException). Bu da istenilen bir durum degil cunku nicin bu exception atildigini anlayamiyoruz. 400 atilabilir. Bu durumda ise baska bir islem yapmamiz gerekebilir.
+        O zaman soyle bir cozum uygulayabiliriz. retrieve method unda hemen sonra, onStatus method unu call edebiliriz. onStatus method u hangi status a gore ne yapilacagini belirtmek icin kulllanilir. Ilk parametresi bir filter dir, ikincisi ise sonrasinda yapicagi islemdir. Ornek olarak;
+            Mono<Ingredient> ingredientMono = webClient 
+                                                .get()
+                                                .uri("http://localhost:8080/ingredients/{id}", ingredientId)
+                                                .retrieve()
+                                                .onStatus(
+                                                    HttpStatus::is4xxClientError,
+                                                    response -> Mono.just(new UnknowmIngredientException())
+                                                )
+                                                .bodyToMono(Ingredient.class);
+            ingredientMono.subscribe(
+                ingredient -> {},
+                error -> {}
+            );
+
+        Bu sekilde, atilan exception i degistirebiliriz. Daha specific http code u icin ise filter i su sekilde kullanabiliriz:
+
+            .onStatus(
+                statusCode -> statusCode == HttpStatus.NOT_FOUND,
+                response -> Mono.just(new UnknowmIngredientException())
+            )
+    
+    11.4.5. Exchanging Requests
+        retrieve() method u ResponseSpec e gore method lar sunar. Bunlar, bodyToFlux(), bodyToMono ve onStatus() gibi response method lari sunar. Bazen bunlar bizim client imiz icin yeterli degildir. Mesela response header lari veya cookie leri de lazim olabilir.
+        exchange() method unu kullanarak, bir Mono tipinde ClientResponse object i alabilirsin, bu payload, header ve cookie leri bize sunar.
+        Ornek olarak, bir tane ingredient alacak kod su sekildedir;
+
+            Mono<Ingredient> ingredientMono = webClient
+                                                .get()
+                                                .uri("http://localhost:8080/ingredients/{id}")
+                                                .exchange()
+                                                .flatMap(clientResponse -> clientResponse.bodyToMono(Ingredient.class));
+
+        Burada ClientResponse bir reactive tipindedir icindeki body de bir reactive type dir. Onun icin flatMap ile body i reactive bir sekilde alabiliriz.
+        Bu arada bu ile retrieve() ile yaptigimiz islem birebir aynidir. 
+
+        Simdi ise exchange() method uyla bir farkli islem yapalim, mesela header ina gore islem yapalim;
+
+            Mono<Ingredient> ingredientMono = webClient
+                                                .get()
+                                                .uri("http://localhost:8080/ingredients/{id}")
+                                                .exchange()
+                                                .flatMap(clientResponse -> {
+                                                    if(clientResponse.headers().header("X_UNAVALIABLE").contains("true")){
+                                                        return Mono.empty();
+                                                    }
+                                                    return Mono.just(clientResponse);
+                                                })
+                                                .flatMap(clientResponse -> clientResponse.bodyToMono(Ingredient.class));
+        
+        Burada ise gelen response un icerdigi header value suna gore islem yapmis olduk. 
+
+11.5. Securing Reactive Web API
+        Bundan once Spring Security i kullanmistik. O da Spring MVC uzerinde calisiyordu. Spring MVC servlet uzerinden calisan bir framework dur. Ama Spring WebFlux, servlet uzerinde calismaz, WebFilter lar uzerinde calisir. Servlet ile iliskisi yoktur.
+        Bu durumda biraz sorunumuz var gibi, ama Spring bunu da bu starter projesi uzerinden ufak degisiklikler yaparak kullanabilmemizi sagladi.
+
+        Spring Security yi kullanmak icin kullandigimiz starter project i SpringMVC ve Spring WebFlux icin ayni;
+            <dependency>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-starter-security</artifactId>
+            </dependency>
+
+        Simdi bu iki model arasinda karsilastirmali olarak ilerleyelim;
+
+    11.5.1. Configuring Reactive Web Security
+        SpringMVC de bir configuration class i yaziyorduk, bu configuration class i da WebSecurityConfigurerAdapter class indan extend ediyordu. Sonra Spring Security inin enable etmek icin class in basina @EnableWebSecurity annotation ini koyuyorduk.
+        Sonrasinda ise configure method larini override yapiyorduk. Bu overriden method larin icinde de application imiz icin security rule larini yaziyorduk.
+
+            ...
+            @Configuration
+            @EnableWebSecurity
+            public class SecurityConfig extends WebSecurityConfigurerAdapter {
+            ...
+                @Override
+                protected void configure(HttpSecurity http) throws Exception {
+                    http.authorizeRequests()
+                        .antMatchers("/design/**", "/orders/**").hasAuthority("USER_ROLE")
+            ...
+        Bunun WebFlux icin karsiligi ise cok benzer:
+            ...
+            @Configuration
+            @EnableWebFluxSecurity
+            public class SecurityConfig {
+                @Bean
+                public SecurityWebFilterChain securityWebFilterChain(ServerHttpSecurity http) {
+                return http.authorizeExchange()
+                                .pathMatchers("/design", "/orders")
+                                .hasAuthority("USER")
+                                .anyExchange().permitAll()
+                                .and() // bundan sonra yeni rule lar girebilirisin.
+                                .build();
+                }
+            }
+        
+        Kabaca degisenler @EnableWebFluxSecurity, bir class dan extend etmemize gerek yok, ama bir SecurityWebFilterChain bean i olusturmamiz lazim. O bean da icine bir ServerHttpSecurity parametresi aliyor.
+        Sonra bu parametre uzerinden SpringMVC Security ye benzer sekilde rule larimizi yaziyoruz. 
+
+        Rule lari yazarken, pathMatchers method u yerine antMatchers i da kullanabilrisin, ama bu daha iyi bir yaklasim, bu tum path leri yakaliyor.
+
+            @Configuration
+            @EnableWebFluxSecurity
+            public class WebFluxSecurityConfig {
+
+                @Bean
+                public SecurityWebFilterChain securityWebFilterChain(ServerHttpSecurity serverHttpSecurity){
+                    return serverHttpSecurity.authorizeExchange()
+                            .pathMatchers("/hello","/bye")
+                            .hasAuthority("USER")
+                            .anyExchange().permitAll().and().build();
+                }
+            }
+
+        Burada ise hello ve bye endpoint leri USER role unda gelen user lar icin authorize gerisine permit edilmistir.
+        
+    11.5.2. Configuring Reactive User Details Service
+        Birebir usedetails service i kullanamiyoruz, cunku database imiz blocking olan bir database. onun icin security i yapamiyoruz.
+
+
+    
+
+
+
+
